@@ -1,0 +1,35 @@
+# converts index values for fundamental frequencies into their actual respective frequencies
+# 10/4/2012 
+# - converted into a setproc function that takes the ff image array and a signal containing the index-frequency conversions. 
+#	This was done to make sure that if the frequency ranges used to generate scalograms is modified the index-frequency values can be updated dynamically.
+#
+# - here are values from initial rf function:
+#	rf[find(rf==13)] :=4.1
+#	rf[find(rf==14)] :=4.4
+#	rf[find(rf==15)] :=4.7
+#	rf[find(rf==16)] := 5.1
+#	rf[find(rf==17)] := 5.4
+#	rf[find(rf==18)] := 5.8
+#	rf[find(rf==19)] := 6.3
+#	rf[find(rf==20)] := 6.7
+#	rf[find(rf==21)] := 7.2
+
+# Example use of this function:
+# source freqInd
+# freqIndexFile = 'freqind_amin2_vox10_omax6.txt'
+# ifc = [listv cread freqIndexFile F][0]
+# rf = [freqInd [copy ref[1;:]] ifc]
+
+
+setproc freqInd {{&signal rf} {&signal ifc}} {
+	minindex = min(rf)
+	maxindex = max(rf)
+	
+	convert = Zero(rf.size)
+	
+	foreach i minindex:maxindex {
+		convert[find(rf==i)] := ifc[i]
+	}
+	
+	return convert
+}

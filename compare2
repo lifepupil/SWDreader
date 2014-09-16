@@ -1,0 +1,111 @@
+# compare is expecting result to be an overlap signal (0-6 integer)
+# compare is expecting annot to have 2 where SWDs are and 0 in interSWDs
+# need check that annot is correct annotation for signal in result
+# must make sure that only overlap == but not > is extracted (loop max to 1 instead?)
+# find max consensus
+# for each PSR check for pure FP (all 1s), pure FN (all 2's), and pure TP (all 3's)
+# for PSRs with some 3s, separate into undercalled (presence of 2s), overcalled (presence of 1s) or mixed (3s,2s,1s)
+# for undercalled - percentage of 3's and percentage of 2's and duration
+# for overcalled - percentage of 3's and 1's and duration
+# for mixed
+
+# compare v.2 UPDATES (7-5-12):
+# 1. Any TP regions within a single SWD are now treated as one TP
+# 2. function simplified to only return number of TPs, FPs and FNs
+# 3. added var to track the percent of signal that matches annotation irrespective of FPs, e.g. a prediction encompassing entire signal would return 100% coverage
+
+# compare v.2.1 UPDATES (7-9-12):
+# 1. Discovered bug when annotation contains no SWDs, e.g. in non-seizing mouse, that TPcoverage will report erroneous value. 
+#	When annotation contains no SWDs then the numdur function returns {0:0 0} which means the range of the only SWD is from timepoint 0 to timepoint 0, and is 0 timepoints in duration.
+#	Fixed by making TPcoverage value conditional on there being at least 1 actual SWD before performing calculation. This required modification of numdur function as well (see notes at 
+#	top of script for numdur function).
+
+# UPDATES v.2.2 (2-14-13):
+# 1. Added two additional measures, (a) the fraction of true positives from the total number of calls, and (b) the fraction of false positives from the total number of calls.
+
+setproc compare2 {{&signal annot} {&signal result} {&string results} {&num maxOverlap}} {
+# CONSTANTS
+range = 0
+duration = 1
+	
+	realSWDs = [numdur2 [copy annot] 1 swd]
+	sigSum = Zero(result.size)
+	
+	# start ROC testing loop with overlap=1 to max consensus	
+	maxCon = max(result)
+	
+	foreach overlap maxOverlap:1 {
+		FNs = {}
+		FPs = {}
+		TPs = {}
+		TPannot = 0
+	
+		# takes PSRs as defined by their overlap value (6 highest, 1 lowest which is essentially no overlap, i.e. PSRs from only one channel)
+		# and converts those regions to 1. All other regions remain at 0.
+		sigSum[find(result>=overlap)] := 1
+
+		# sum annot and sigNum to get 1's (false positives), 2's (false negatives) and 3's (true positives). 0's indicate true negatives.			
+		sigSum = sigSum + annot
+
+		if (realSWDs.size==1 && realSWDs[0][1]==0) {
+			TPcoverage = 0
+			realSWDnum = 0
+		} else {
+			TPcoverage = ((sigSum[find(sigSum==3)].size)/(annot[find(annot>0)].size))*100
+	#		TPcoverage = round(TPcoverage)
+	#		TPcoverage = TPcoverage/100
+	
+			foreach thisSWD 0:realSWDs.size-1 {
+				TPquery = sigSum[find(sigSum[realSWDs[thisSWD][range]]==3)].size
+				if (TPquery>0) {
+					TPs+=1
+				} else {
+					FNs+=1
+				}
+			}
+		
+			if (TPs.size>0) {
+				TPannot = (TPs.size/realSWDs.size)*100
+			}
+			
+			realSWDnum = realSWDs.size
+		}
+		
+		# Get all possible SWD regions (PSRs)
+		PSRs = [numdur2 [copy sigSum] 1 swd]
+					
+		# number of 1s and number of 3s for <thisPSR>ith PSR
+		foreach thisPSR 0:PSRs.size-1 {
+			# 1's (false positives) in PSR 
+			ones = sigSum[find(sigSum[PSRs[thisPSR][range]]==1)].size
+			# 3's (true positives) in PSR
+			threes = sigSum[find(sigSum[PSRs[thisPSR][range]]==3)].size
+			
+			if (threes == 0) {
+				if (ones > 0) {
+					FPs += 1
+				}
+			}
+		}
+		TC = TPs.size + FPs.size
+		if (TC>0) {
+			TPofTC = TPs.size/TC
+			FPofTC = FPs.size/TC
+		} else {
+			TPofTC = 0
+			FPofTC = 0		
+		}
+		results+="$TPs.size,$FPs.size,$FNs.size,$TPcoverage,$TPannot,$TPofTC,$FPofTC,"
+		
+		# TP+FP does not have to add up to total PSRs b/c if there are 2 or more PSRs within a single SWD then they are counted as 1
+		echo $TPs.size of $realSWDnum real realSWDs were found
+		echo $FPs.size false positive regions
+		echo $FNs.size false negative regions
+		echo $TPcoverage percent of all PSR time points found in real SWDs
+		echo 
+		sigSum[:]:=0
+	}
+	return results
+	
+# setproc end
+}

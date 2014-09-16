@@ -1,0 +1,119 @@
+# rejects PSRs based on their duration and isolation
+# takes a consensus signal (signalHolder) by summing PSRs across channels
+# IMPORTANT NOTES:
+# 1. If any PSRs other than the first one are closer to the start than the minimum distance before then program will choke
+#
+# durationFilter v.2.0 - November 21, 2012
+# UPDATES:
+# 1. Discovered that if the first and last PSRs are not within minimum distance of the session start or finish then they will be kept even if they are shorter than the minimum duration.
+# 	Modifying function so that every PSR is (a) duration tested, (b) if less than minimum duration then tested for either another PSR within minimum proximity before or after.
+#	Only the first and last PSR get special treatment with respect to checking whether minimum before or after (respectively) collides with the start or end of the recording session.
+#	And only the code for first and last PSRs has been modified.
+
+# durationFilter v.2.1 - November 28, 2012
+# UPDATES:
+# 1. Discovered that the before and after variables were not set properly, e.g. [ranges][1] instead of [ranges][@>]. FIXED.
+# 2. Also found that the test of whether another PSR is within minimumAfter was not set correctly; changed from any(...) to !(any(...)
+
+# durationFilter v.2.2 - November 29, 2012
+# UPDATES:
+# 1. If there is only 1 PSR in the signal passed into this function then it returned an error. Made further continuation of function contingent on the number of PSRs
+#	appearing in the passed signal.
+
+# UPDATE: December 11, 2012
+# - discovered that parentheses around signal condition of !(any(signalHolder for before and after were wrong, and thus logic was not what it was meant to be. Logic should be:
+# (!(any(signalHolder[before]) || any(signalHolder[after])))
+
+# UPDATE: August 6, 2013
+# - if there is more than one PSR within 100 samples of the start, then an error will occur (current code implicitly assumes that the second PSR will not be within, e.g. 100, of signal start)
+# - the same potential for error at signal end also exists
+
+
+setproc durationFilter2 {{&signal signalHolder} {&num minimumDuration} {&num minimumBefore} {&num minimumAfter} {&num cutoff} {&num sampleRate}} {
+	# CONSTANTS
+	ranges = 0
+	duration = 1
+
+		mds = minimumDuration/sampleRate
+		mbs = minimumBefore/sampleRate
+		mas = minimumAfter/sampleRate
+		removed = 0
+		
+		
+		# NEXT TWO LINES ARE HERE TO PERMIT DURATION FILTERING IN OVERLAP CONSENSUS SIGNALS
+		PSRs = [numdur2 [copy signalHolder] cutoff swd]
+		signalHolder[find(signalHolder<cutoff)] :=0
+		
+		
+		
+		# THIS EXECUTES v.2.0 TEST FOR FIRST PSR
+		# The +1 and -1 values are to make sure that the edges of the PSR do not count in the any() tests
+		if (PSRs[0][duration]<=minimumDuration) {
+			distanceToStart = PSRs[0][ranges][0]-(minimumBefore+1)
+
+			if (distanceToStart<0) {
+				after = <PSRs[0][ranges][@>]+1:PSRs[0][ranges][@>]+(minimumAfter+1)>
+				if (!(any(signalHolder[after]))) {
+					signalHolder[PSRs[0][ranges]] :=0
+					removed+=1
+				}
+			} else {
+				after = <PSRs[0][ranges][@>]+1:PSRs[0][ranges][@>]+(minimumAfter+1)>
+				before = <PSRs[0][ranges][0]-(minimumBefore+1):PSRs[0][ranges][0]-1>
+				if (!(any(signalHolder[before]) || any(signalHolder[after]))) {
+					signalHolder[PSRs[0][ranges]] :=0
+					removed+=1
+				}
+			}
+		}
+
+		if (PSRs.size>1) {
+		
+			# THIS EXECUTES v.2.0 TEST FOR LAST PSR
+			if (PSRs[@>][duration]<=minimumDuration) {
+				distanceToEnd = PSRs[@>][ranges][@>]+(minimumAfter+1)
+				if (distanceToEnd>signalHolder.size-1) {
+					before = <PSRs[@>][ranges][0]-(minimumBefore+1):PSRs[@>][ranges][0]-1>
+					if (!(any(signalHolder[before]))) {
+						signalHolder[PSRs[@>][ranges]] :=0
+						removed+=1
+					}
+				} else {
+					after = <PSRs[@>][ranges][@>]+1:PSRs[@>][ranges][@>]+(minimumAfter+1)>
+					before = <PSRs[@>][ranges][0]-(minimumBefore+1):PSRs[@>][ranges][0]-1>
+					if (!(any(signalHolder[before]) || any(signalHolder[after]))) {
+						signalHolder[PSRs[@>][ranges]] :=0
+						removed+=1
+					}
+				}
+			}
+		}
+		
+		if (PSRs.size>2) {
+			# NB - pass/fail conditions MIGHT include the size of their neighbors as well as their proximity; not sure if it would improve things or not
+			foreach possibleSWD 1:PSRs.size-2 {
+				if (PSRs[possibleSWD][duration]<=minimumDuration) {
+
+					distanceToStart = PSRs[possibleSWD][ranges][@<]-(minimumBefore+1)
+					if (distanceToStart<0) {
+						before = <0:PSRs[possibleSWD][ranges][@<]-1>
+					} else {
+						before = <PSRs[possibleSWD][ranges][@<]-(minimumBefore+1):PSRs[possibleSWD][ranges][@<]-1>
+					}
+					
+					distanceToEnd = PSRs[possibleSWD][ranges][@>]+(minimumAfter+1)
+					if (distanceToEnd>signalHolder.size-1) {
+						after = <PSRs[possibleSWD][ranges][@>]+1:signalHolder.size-2>
+					} else {
+						after = <PSRs[possibleSWD][ranges][@>]+1:PSRs[possibleSWD][ranges][@>]+(minimumAfter+1)>
+					}
+					
+					if (!(any(signalHolder[before]) || any(signalHolder[after]))) {
+						signalHolder[PSRs[possibleSWD][ranges]] :=0
+						removed+=1
+					}			
+				}
+			}
+		}
+	echo There were $PSRs.size PSRs - removed $removed PSRs < $mds seconds long with no neighboring PSRs within $mbs seconds.
+}

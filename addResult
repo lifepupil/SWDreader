@@ -1,0 +1,18 @@
+
+setproc addResult {{&string path} {&string results} {&word fname}} {
+#	file cd path
+	
+	if (fname=='-r') {
+		filename = 'resultsFile.csv'
+	} elseif (fname=='-W') {
+		filename = 'WaynesList.csv'
+	} elseif (fname=='-roc') {
+		filename = 'roclist.csv'
+	} else {
+		filename = fname[1:@>-1]
+	}
+	
+	strm = [file open path+filename 'a']
+	echo $results :: >>strm
+	file close strm
+}

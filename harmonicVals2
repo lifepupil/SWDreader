@@ -1,0 +1,105 @@
+# populates hamp or hphz depending on the scalogram passed
+# EDIT 6/26/12	- modifying nhvals so that the only amplitude values that are compared to putative harmonic peaks are those within the original xcorr region tested in harmonicRefs
+# 				- add start, end to argument list
+#				- modify nonPeakNorm, the normalization factor to correct for the greater number of putatively NON-harmonic frequencies than harmonic ones (i.e. 4)
+#				so sums will be comparable. If there are 60 frequencies in y-axis of scalogram, and 4 are putative harmonics, then (60/4=15) after removing the 
+#				4 harmonic frequencies then sum of remaining values must be divided by 14. 
+#				Alternately if 20 of these (contiguous) frequencies are tested in xcorr, then nonPeakNorm must be set to 20/4 = 5-1 =4.
+# EDIT 9-5-13	- MAKE SURE THAT refIndex matches desired frequency index in ref 
+#					ref[1;:] is for reweighed cross-covariance
+#					ref[3;:] is for cross-correlation
+#					ref[5;:] is for reweighed cross-correlation
+#				- also removed nonPeakNorm and replaced with sum of nonharmonic power
+# 
+# UPDATE (4-2-14):
+# - integrating pfilt and associated code to include power at frequencies adjacent to putative harmonics to write into .hamp files
+# - note changes to harmonicRefs2 and preproc_v1 which overturn updates above.
+# - also note that start and end arguments are no longer being used to restrict range of what is considered background (non-harmonic) power
+#	they are being kept for the time being but as of this update are now vestigial
+#
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~`
+
+setproc harmonicVals2 {{&image scal} {&image ref} {&image hmx} {&num start} {&num end} {&word AorP}} {
+
+	# make sure that refIndex matches up with the row in harmonicRefs that corresponds to the fundamental frequency estimates (from either xcov or xcorr)
+	# harmonicRefs2 will be either 1 for xcov, or 3 for xcorr. Not yet tested whether they are always the same or not - probably are but for time being still 
+	# calculating andf storing them separately.
+	refIndex = 3
+
+	source pfilt
+	
+	# Values for harmonicPos are only valid for WT scalograms generated using amin=2, omax = 6, vox=10
+	harmonicPos = <1,11,17,21>
+	lowerFwidth = <1,1,1,1>
+	upperFwidth = <1,1,1,1>
+	
+	
+	tt = [time current -l]
+	if (tt[1]<10) {mm = '0$tt[1]'} else {mm = tt[1]}
+	if (tt[2]<10) {ss = '0$tt[2]'} else {ss = tt[2]}
+	
+	echo harmonicVals STARTED at $tt[0]:$mm:$ss
+
+	vertSlice = Zero(scal.nrow)
+	
+	if (AorP=='A') {
+	
+		hpk1 = [pfilt <harmonicPos[0]> <lowerFwidth[0]> <upperFwidth[0]>]
+		hpk2 = [pfilt <harmonicPos[1]> <lowerFwidth[1]> <upperFwidth[1]>]
+		hpk3 = [pfilt <harmonicPos[2]> <lowerFwidth[2]> <upperFwidth[2]>]
+		hpk4 = [pfilt <harmonicPos[3]> <lowerFwidth[3]> <upperFwidth[3]>]	
+		hvals = <0,0,0,0>
+		
+		foreach t 0:scal.ncol-1 {
+		
+			if (tt[1]<[time current -l][1]) {
+				if (tt[1]<10) {mm = '0$[time current -l][1]'} else {mm = [time current -l][1]}
+				echo At $[time current -l][0]:$mm:00 $t out of $scal.ncol samples complete
+				tt[1]=tt[1]+1
+			}
+			
+			vertSlice = scal[:;t].tosignal
+			
+			if (ref[refIndex;t]<-1) {
+				hmx[<0:3;t,t,t,t>] = <0,0,0,0>
+			} else {
+				hvals[0] = sum(vertSlice[*x,hpk1+ref[refIndex;t]])
+				hvals[1] = sum(vertSlice[*x,hpk2+ref[refIndex;t]])
+				hvals[2] = sum(vertSlice[*x,hpk3+ref[refIndex;t]])
+				hvals[3] = sum(vertSlice[*x,hpk4+ref[refIndex;t]])
+
+				# nhvals is sum of nonharmonic power
+				nhvals = sum(vertSlice) - sum(hvals)
+				hmx[0:3;t] = ~hvals
+				hmx[4;t] = nhvals
+			}
+		}
+	} elseif (AorP=='P') {
+			
+		foreach t 0:scal.ncol-1 {
+		
+			if (tt[1]<[time current -l][1]) {
+				if (tt[1]<10) {mm = '0$[time current -l][1]'} else {mm = [time current -l][1]}
+				echo At $[time current -l][0]:$mm:00 $t out of $scal.ncol samples complete
+				tt[1]=tt[1]+1
+			}
+			
+			vertSlice = scal[:;t].tosignal
+			
+			if (ref[refIndex;t]<-1) {
+				hmx[<0:3;t,t,t,t>] = <0,0,0,0>
+			} else {
+				hmx[<0:3;t,t,t,t>] = vertSlice[*x,harmonicPos+ref[refIndex;t]]
+			}
+		}
+	}
+	
+	
+	tt = [time current -l]
+	if (tt[1]<10) {mm = '0$tt[1]'} else {mm = tt[1]}
+	if (tt[2]<10) {ss = '0$tt[2]'} else {ss = tt[2]}
+	echo harmonicVals DONE at $[time current -l][0]:$mm:$ss
+
+	return
+
+}

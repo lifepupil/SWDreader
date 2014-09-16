@@ -1,0 +1,61 @@
+# scalogramGen - scalogram generator
+# version 1.0 Nov 8, 2012
+# A function dedicated to processing the channels in .lwr files to generate their respective amplitude and phase scalograms
+
+# UPDATE (4-2-14):
+# - minor modifications made to integrate with preproc_v1
+# - assumes that all 6 EEG channels get processed
+# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+setproc scalogramGen {{&wtrans mwt} {&image LWR} {&image scalogramImage} {&listv WTparams} {&string mouse}} {
+	# PROPERTIES OF PASSED ARGUMENTS:
+	# mwt contains blank &wtrans
+	# LWR contains 6 EEG recordings, 1 row for each electrode pair
+	# scalogramImage is blank &image into which scalograms are put for saving to disk
+	# WTparams is list of wavelet transform values passed from preproc_v1 (old main1) script
+	# mouse is mouse ID passed for purpose of saving to disk
+
+	source wt_to_img
+	
+	amin = WTparams[0]
+	vox = WTparams[1]
+	omax = WTparams[2]
+	morletOscillations = WTparams[3]
+	Morlet_Scale = WTparams[4]
+	sampleRate = WTparams[5]
+	scalAPath = WTparams[6]
+	scalPPath = WTparams[7]
+	WTparamStr = WTparams[8]
+	
+	thisMorlet = [fftw_MorletWavelets morletOscillations]	
+	MorletWindowSize = sampleRate/2	
+	
+	# CHANNEL LOOP
+	foreach channel 0:5 {	
+		ch = channel+1
+		mwt.A[0,0] = LWR[channel;:]
+		
+		echo Morlet wavelet transform for mouse $mouse channel $ch STARTED
+		fftw_cwtd mwt amin omax vox thisMorlet -e Morlet_Scale
+		
+		echo Putting spectral power results into image...
+		wt_to_img mwt scalogramImage
+
+		echo Writing image to disk...
+		iwrite scalogramImage scalAPath+mouse+'_$WTparamStr'+'$channel'+'.scalA'
+		echo Amplitude scalogram written
+		echo
+		
+		fftw_cwtd mwt amin omax vox thisMorlet -e Morlet_Scale -p mwt
+
+		echo Putting spectral phase results into image...
+		wt_to_img mwt scalogramImage
+		
+		echo Writing image to disk...
+		iwrite scalogramImage scalPPath+mouse+'_$WTparamStr'+'$channel'+'.scalP'
+		
+		echo Phase scalogram written
+		echo Morlet wavelet transform channel $ch DONE
+		echo
+	}
+}

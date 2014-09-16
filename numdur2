@@ -1,0 +1,115 @@
+# calculates number and duration of SWDs or interspike intervals from thresholded signal
+# cutoff value is expected to represent the lowest salvageable value
+
+# numdur v.2 UPDATES (7-9-12):
+# 1. Discovered that if there is only a single SWD in signal that is passed to this function and if looking for inter-SWD values then it will return {0:0 0} where {range duration}.
+#	Fixed problem by changing if statement condition at line 61 from (pd.size>1) to (pd.size>0 && pd.size==nd.size). It is not clear why I chose this condition in the first place
+#	except that I didn't consider the condition of having a single SWD or PSR. I can't find any reason why this change should negatively affect downstream code, and have tested it
+#	with:
+#		a. single timepoint 'SWD' under swd and interswd
+#		b. two separate single timepoint 'SWD's under swd and interswd
+#		c. One and two 'SWD's that are longer than single timepoint under swd and interswd (the most likely form that real data would take)
+#	Changes to numdur passed on all accounts, so keeping change.
+
+# numdur2 v.1 UPDATES (2-25-13):
+# 1. Discovered that there were frequent incidents of negative durations, and that they may be linked to the sudden LW termination from segfault.
+#	Figured out finally that the problem was with the line:
+#		p2Addr = rawRng.X[find(rawRng==peakHeight[i])]
+#	If two or more peak heights in the tested region (PSR passed to numdur) were the same, then it would take the address of the first peak with that height
+#	even if that was not the correct one. Solved problem by making a copy of the spike "neck" and looked for the address of the maximum peak height
+#	only in that region. Since x0 is preserved, the address (i.e. time-point) is in the context of the entire EEG session; as such the "local" address does not 
+#	need to be recontextualized, i.e. by adding it to the x0 where the spike neck starts.
+# 2. During the debugging process to fix the above problem, minor modifications were made to the 'isi' related code blocks to simplify and thus make code 
+#	easier to read.
+
+setproc numdur2 {{&signal overlapSig} {&num cutoff} {&word switch}} {
+
+if (cutoff < 0) {
+	overlapSig = overlapSig - cutoff
+	overlapSig[find(overlapSig < 0)] := 0
+	rawRng = [copy overlapSig]
+	overlapSig[find(overlapSig > 0)] := 2
+} else {
+	overlapSig[find(overlapSig < cutoff)] := 0
+	rawRng = [copy overlapSig]
+	overlapSig[find(overlapSig > 0)] := 2
+}
+
+# With the cutoff operation complete, interswd calculations using alternate cutoffs (i.e. other than 1) will correctly parse them
+if (switch=='interswd' || switch=='swc') {
+	inverse = Zero(overlapSig.size)
+	inverse[find(overlapSig==0)] :=-2
+	inverse[find(overlapSig>0)] :=0
+	overlapSig = [copy inverse*-1]
+}
+
+overlapSig[0] = 0
+overlapSig[overlapSig.size-1] = 0
+
+sigder = der(overlapSig)
+pd = <>
+nd = <>
+thresh sigder pd -y 1 *
+thresh sigder nd -y * -1
+
+output = {}
+if (switch=='isi') {
+	if (pd.size>1) {		
+		spikeOnset = 0
+		spikeOffset = 1
+		p1Addr = Zero(pd.size)
+		ISIdurations = Zero(pd.size-1)
+		peakHeight = Zero(pd.size)
+		
+		spikeRng = <0,0>
+		spikeRng[spikeOnset] = (pd.X[0]-rawRng.x0)
+		spikeRng[spikeOffset] = (nd.X[0]-rawRng.x0)
+		peakHeight[0] = max(rawRng[<spikeRng[spikeOnset]:spikeRng[spikeOffset]>])		
+		p1Addr[0] = rawRng.X[find(rawRng==peakHeight[0])][0]
+		
+		foreach i 1:pd.size-1 {
+			spikeRng[spikeOnset] = (pd.X[i]-rawRng.x0)
+			spikeRng[spikeOffset] = (nd.X[i]-rawRng.x0)
+			peakHeight[i] = max(rawRng[<spikeRng[spikeOnset]:spikeRng[spikeOffset]>])
+			thisSpike = [copy rawRng[<spikeRng[spikeOnset]:spikeRng[spikeOffset]>]]
+			p2Addr = thisSpike.X[find(thisSpike==peakHeight[i])]
+			# added 2nd condition to prevent adjacent timepoints from terminating program (if there are more than 1 addr at p2Addr but they are adjacent, e.g. 17 and 18, then still not a problem)
+			if (p2Addr.size>1) {
+				if (p2Addr.size>2 || (p2Addr[0]-p2Addr[1]>1)) {
+					print p2Addr ;; print p2Addr.size ;; timepoints not adjacent
+				}
+			}
+			ISIdurations[i-1] = p2Addr[0] - p1Addr[i-1]
+			if ((p2Addr[0] - p1Addr[i-1])<0) {echo $i ~~ $spikeRng ~~~ $p2Addr ;;ddddd;;badSpike+=1}
+			p1Addr[i] = p2Addr[0]
+		}
+		output = {p1Addr ISIdurations peakHeight}
+		
+	} else {
+		output = {<> <> <>}
+	}
+} elseif (switch=='swd' || switch=='interswd') {
+	if (pd.size>0 && pd.size==nd.size) {
+		output.size = pd.size
+		foreach i 0:pd.size-1 {
+			output[i] = {{pd.X[i]:1:nd.X[i]-1 nd.X[i]-pd.X[i]}}
+		}
+	} else {
+		output.size = 1
+		output[0] = {{0:0 0}}
+	}
+
+} elseif (switch=='swc') {
+	if (pd.size>0 && pd.size==nd.size) {
+		output.size = pd.size
+		foreach i 0:pd.size-1 {
+			output[i] = {{pd.X[i]-1:1:nd.X[i]-1 nd.X[i]-pd.X[i]}}
+		}
+	} else {
+		output.size = 1
+		output[0] = {{0:0 0}}
+	}
+}
+	
+return output
+}

@@ -1,0 +1,40 @@
+# joins PSRs based on temporal proximity and consensus counts, i.e. how many EEG electrode pair signals agree (can be as high as 6 for current experimental setup)
+# joinPSRs expects PSRsig to be an overlap signal
+# MUST NOT copy signal into this setproc otherwise it will not be join edited
+# join must set join values to highest/lowest? of bridged PSR 
+
+setproc joinPSRs2 {{&signal PSRsig} {&num prox}} {
+
+	
+	# CONSTANTS
+	ranges = 0
+	duration = 1 
+
+	# VARIABLES
+	joined = 0
+	interPSRs = [numdur2 [copy PSRsig] 1 interswd]
+	
+#	return interPSRs
+
+	numIPSRs = interPSRs.size
+	
+	echo Starting join function...
+	foreach i 0:interPSRs.size-1 {
+		if (interPSRs[i][duration]<=prox) {
+			joined+=1
+			prePSRoverlap = PSRsig[interPSRs[i][ranges][0]-1]
+			postPSRoverlap = PSRsig[interPSRs[i][ranges][@>]+1]
+#			echo $i pre $prePSRoverlap $postPSRoverlap
+			PSRsig[interPSRs[i][ranges]] := max(prePSRoverlap,postPSRoverlap)
+		}
+	}
+	
+	PSRs = [numdur2 [copy PSRsig] 1 swd]
+	foreach PSR 0:PSRs.size-1 {
+		PSRsig[PSRs[PSR][ranges]] := max(PSRsig[PSRs[PSR][ranges]])
+	}
+	
+	echo Joined $joined out of $numIPSRs total inter-PSRs
+	echo Ending join function
+# END joinPSRs
+}

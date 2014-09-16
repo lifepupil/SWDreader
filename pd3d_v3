@@ -1,0 +1,385 @@
+
+# pd3d
+
+# Generates 3-dimensional phase difference distribution 
+# where <phi1:2,phi1:3,phi1:4> for each time-point (a) within a known SWD (from annotation),
+# and (b) within a region where phase differences between 1st and 2nd harmonic frequencies are ~constant
+#
+# TO DO (2-28-13):
+# 1. add lines to write matrices in 3-D phase difference distribution
+# 2. convert this into a callable function (phaseDist3D) for use in main1 pre-processing script
+# 3. make it possible to generate distributions by channel (currently distrib is across all channels)
+# 4. make it possible to generate distrib by mouse EEG recording session
+# 5. include the timepoint, channel and mouseID for each <phi1:2,phi1:3,phi1:4> point (to allow tracking of points in case debug needed)
+#
+# UPDATE (1-27-14):
+# 1. Taking functionality in earlier versions of pd3d-type functions for saving and converting 3-D phase difference histograms
+#	-add
+#	-save_fiji
+# 2. Also add functionality for reconverting ImageJ/Fiji output back into a form usable by LastWave
+#	-load_fiji
+# 	In order to use this option, 
+#		a) You must have a stack of images in fiji (3D tiff stack) that has been saved using "image sequence". 
+#		b) Choose the following options: format "text", start at 0, digits 3, and checkmark in "use slice labels as file names"
+#		EXAMPLE: pdl = {} ;; pd3d pdl pdXtime_NULL filter_NULL -load_fiji pd3dPath
+#
+	# TO DO GAUSSIAN BLUR OF PHASE DIFFERENCE HISTOGRAM IN IMAGEJ/FIJI:
+	# 0. For any given 3-D phase difference histogram, there will be one folder containing 3 folders, raw/, lw/ and fiji/
+	#	raw/	this is the write folder to start the entire process, storing 3-D phase difference images that have been fully populated 
+	#	fiji/	this is where ImageJ/Fiji-processed matrices are stored
+	#	lw/		this is where ImageJ/Fiji-processed matrices are re-translated into images for LastWave to use
+	# 1. Open ImageJ/Fiji
+	# 2. Select Plugins | Macros | Run... and double-click on the ImageJ/Fiji macro called "Imagesequence2stack.ijm"
+	# 3. Go to the raw/ folder and double-click "file_list.txt" to load all 360 matrices into ImageJ/Fiji
+	# 4. Select Process | Filters | Gaussian Blur... then enter 5 for Sigma(radius), click "OK" and "Yes" for "Process all 360 images?"
+	#	OPTIONAL: To visualize in ImageJ/Fiji
+	#	a) Select Image | Lookup Tables | Rainbow RGB
+	#	b) Select Image | Adjust | Brightness/Contrast... and click the 'Reset' button
+	#	c) You can scroll through images with the horizonal slider at the bottom of the Stack window, OR
+	#	d) Select plugins | 3D Viewer then click "OK" twice to get a 3D rendering
+	# 5. Select File | Save As | Image Sequence...
+	# 6. Select "Text" from the Format drop down menu, set Digits (1-8) to 3, and put check mark in "Use slide labels as file names"
+	# 7. In the pop-up window, go up one directory level, double-click the "fiji" folder then click "Save"
+#
+# TO DO (1-27-14):
+# 1. Edit code so that if any of the 3 phase difference histogram folders do not exist, then create them
+#
+# UPDATE (3-5-14):
+# - Added more action options to permit 3d rendering with R and time-ordered coordinate sequences
+# - CHANGED FUNCTION NAME to pd3d-2 (version 2 of pd3d)
+# - CHANGED NAME to pd3d_v2 because LW does not like hyphenated function names
+#
+# UPDATE (3-29-14):
+# - edited this function to work with preproc_v1 function (main for pre-processing steps, used to be main1)
+# - included new action to permit use on linux or windows based on the differences in their path formats, i.e. \ for win and / for linux
+#
+# UPDATE (4-7-14):
+# - overhaul of -sequence option
+#
+# UPDATE (4-10-14):
+# - added -load_lw option to permit quick and easy loading of a desired phase difference distribution, e.g. for visualization purposes
+#
+# UPDATE (4-16-14):
+# - added a new action, -add_v180 which creates a phase difference distribution using range of (-180) to (+179) degrees instead of 0 to 359
+#
+# UPDATE (5-6-14):
+# - edited the -sequence action to work with power at fundamental frequency values, EEG, FF index, and fundamental frequency added to phaseDiffs_x_time in preproc_v1
+# - note that for -sequence action, LW indices start at 0, but start at 1 in R
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~`
+#
+# UPDATE (5-29-14):
+# - ADDED -add_by_swc method so that a pd distribution can be generated whose frequency values accurately reflect the number of SWCs passing through
+#	each coordinate. If a single SWC has trajectory with multiple instances at the same coordinate then the current method (-add) counts them all.
+#	Reason to add this method is:
+#	(1) to permit SWC density comparisons between strains
+#	(2) for use in trajectory analysis
+#	(3) It may also improve SWDfinder algorithm performance.
+
+setproc pd3d_v3 {{&listv phase3Ddist} {&image pdXtime} {&signal sigFilter} {&word action} {&string resultPath}} {
+	# CONSTANTS >>>
+	phi_12 = 0
+	phi_13 = 1
+	phi_14 = 2
+	EEG_sig = 3
+	FF_index = 4
+	FF_Hz = 5
+	FF_power = 6
+	ranges = 0
+	duration = 1
+	# CONSTANTS <<<
+	
+	if (action=='-add') {
+	# since resultPath is not used in this action, could pass the path and text filename into which to write coordinates
+		if (phase3Ddist.size==0) {
+			foreach i 0:359 {phase3Ddist+= Zero(360,360)}
+		}
+		pd12 = pdXtime[phi_12;:]
+		pd13 = pdXtime[phi_13;:]
+		pd14 = pdXtime[phi_14;:]
+		if (min(pdXtime)<0 && max(pdXtime)<=180) {pdXtime+=180}
+		
+		foreach degree12 0:359 {
+#			echo phi1:2 = $degree12
+			swdAddresses = find(pdXtime[phi_12;:]>=degree12 && pdXtime[phi_12;:]<(degree12+1) && sigFilter>0)			
+			if (swdAddresses.size>0) {
+				foreach degrees1314 0:swdAddresses.size-1 {
+					thisPD13 = floor(pd13[swdAddresses[degrees1314]])
+					thisPD14 = floor(pd14[swdAddresses[degrees1314]])
+					phase3Ddist[degree12][thisPD13;thisPD14]+=1
+				}
+			}
+		}
+		
+	# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	} elseif (action=='-add_by_swc') {
+		# since resultPath is not used in this action, could pass the path and text filename into which to write coordinates
+		# for this method to work, must:
+		#		(1) look in SWCs rather than SWDs (using sigFilter to pass annotation) from @< to @>+1 to catch pd coordinates between adjacent SWCs
+		#	AND (2) not plot multiple instances of the same coordinate within each SWC
+		# Phase at FF for EEG channel must be passed through pdXtime.
+		# Raw annotation signal passed as sigFilter.
+		#
+		# BEFORE FIRST TEST RUN, CONFIRM:
+		# (1) that SWC ranges within any given SWD are correct for first and last SWC, 
+		# (2) and not excluding timepoints between SWCs
+		# AFTER FIRST TEST WITHOUT ERROR THROWN:
+		# (3) MAKE SURE THAT DISTRIBUTION IS CORRECT by:
+		#	a) comparing sum of all counts with total timepoints
+		# 	b) checking range boundaries of both adjacent SWCs and first/last SWCs with SWD (all check out EXCEPT last timepoint in SWD - mostly trivial for now)
+	
+		pd12 = pdXtime[phi_12;:]
+		pd13 = pdXtime[phi_13;:]
+		pd14 = pdXtime[phi_14;:]
+		fundFreq = pdXtime[3;:]
+		annotRngs = [numdur2 [copy sigFilter] 1 swd]
+
+		totalSWCs = 0
+		foreach SWD 0:annotRngs.size-1 {
+			SWCs = [numdur2 [copy fundFreq[annotRngs[SWD][ranges]]] pi swc]
+			x0 = annotRngs[SWD][ranges][@<]
+			totalSWCs+=SWCs.size
+			foreach SWC 0:SWCs.size-1 {
+				old_pd3d = {}
+				foreach d 0:359 {old_pd3d+= [copy phase3Ddist[d]]}
+				foreach timepoint (SWCs[SWC][ranges]+x0) {
+					thisPD12 = floor(pd12[timepoint])
+					thisPD13 = floor(pd13[timepoint])
+					thisPD14 = floor(pd14[timepoint])
+					# if (timepoint==29680 || timepoint==29681) {echo $SWC $thisPD12 $thisPD13 $thisPD14 $old_pd3d[thisPD12][thisPD13;thisPD14] $phase3Ddist[thisPD12][thisPD13;thisPD14]}
+					
+					if (old_pd3d[thisPD12][thisPD13;thisPD14]==phase3Ddist[thisPD12][thisPD13;thisPD14]) {
+						phase3Ddist[thisPD12][thisPD13;thisPD14]+=1
+					# } else {
+						# echo yep
+						# testList+={timepoint SWCs[SWC][ranges]+x0}
+					}
+				}
+			}
+		}
+		echo total SWCs = $totalSWCs
+	# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	} elseif (action=='-add_v180') {
+	# since resultPath is not used in this action, could pass the path and text filename into which to write coordinates?
+		if (phase3Ddist.size==0) {
+			foreach i 0:359 {phase3Ddist+= Zero(360,360)}
+		}
+
+		if (min(pdXtime)==0 && max(pdXtime)>180) {echo $(min(pdXtime)) - (max(pdXtime)) ;; pdXtime-=180}
+		pd12 = pdXtime[phi_12;:]
+		pd13 = pdXtime[phi_13;:]
+		pd14 = pdXtime[phi_14;:]
+		
+		foreach index12 0:359 {
+			degree12 = index12-180
+			swdAddresses = find(pdXtime[phi_12;:]>=degree12 && pdXtime[phi_12;:]<(degree12+1) && sigFilter>0)			
+			if (swdAddresses.size>0) {
+				foreach degrees1314 0:swdAddresses.size-1 {
+					degree13 = floor(pd13[swdAddresses[degrees1314]])
+					degree14 = floor(pd14[swdAddresses[degrees1314]])
+					
+					index13 = degree13+180
+					index14 = degree14+180
+					phase3Ddist[index12][index13;index14]+=1
+				}
+			}
+		}
+		
+	# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	} elseif (action=='-sequence') {
+		# CONSTANTS <
+		# for numdur2 function
+		ranges = 0
+		duration = 1
+		# CONSTANTS >		
+		
+		# phase3Ddist listv is used to hold identifying information rather than phase difference space matrices
+		# - create file for each EEG channel (of each mouse-session)
+		# - include labels indicating where SWCs and SWDs start and stop
+		# - include distance between successive coordinates, but write specialized function to do distance calculations
+		
+		strain = phase3Ddist[0]
+		mouseID = phase3Ddist[1]
+		channel = phase3Ddist[2]
+		
+		if ([file list resultPath+"$mouseID"].size==0) {
+			file createdir resultPath "$mouseID"
+		}
+		mousePath = resultPath+"$mouseID/"
+
+		if ([file list mousePath+"channel_"+"$channel"].size==0) {
+			file createdir mousePath "channel_"+"$channel"
+		}
+		channelPath = mousePath+"channel_"+"$channel/"
+		
+		fundFreq = sigFilter
+		
+		pd12 = pdXtime[phi_12;:]
+		pd13 = pdXtime[phi_13;:]
+		pd14 = pdXtime[phi_14;:]
+		EEG = pdXtime[EEG_sig;:]
+		FFi = pdXtime[FF_index;:]
+		FF = pdXtime[FF_Hz;:]
+		FFp = pdXtime[FF_power;:]
+		
+		if (min(pd12)<0 && max(pd12)<=180) {pd12+=180}
+		if (min(pd13)<0 && max(pd13)<=180) {pd13+=180}
+		if (min(pd14)<0 && max(pd14)<=180) {pd14+=180}
+		
+		annotRngs = phase3Ddist[3:]
+
+		coordsBefore = <0,0,0>
+		coordsAfter = <0,0,0>
+		
+		foreach SWD 0:annotRngs.size-1 {
+			# go to or create new folder for this SWD
+			if ([file list channelPath+"SWD_"+"$SWD"].size==0) {
+				file createdir channelPath "SWD_"+"$SWD"
+			}
+			swdPath = channelPath+"SWD_"+"$SWD/"
+			
+			SWCs = [numdur2 [copy fundFreq[annotRngs[SWD][ranges]]] pi swc]
+			x0 = annotRngs[SWD][ranges][@<]
+			
+			# priming first set of coordinates so that velocity between initial and immediately following coordinates will be 0
+			# when SWC loop ends, this will also reset coordsBefore so that last set of coordinates in previous SWD are not used with first set of coordinates in next SWD
+			coordsBefore = <pd12[x0],pd13[x0],pd14[x0]>
+			
+			foreach SWC 0:SWCs.size-1 {
+				foreach timepoint (SWCs[SWC][ranges]+x0) {
+				
+					thisPD12 = floor(pd12[timepoint])
+					thisPD13 = floor(pd13[timepoint])
+					thisPD14 = floor(pd14[timepoint])
+					EEG_t = (EEG[timepoint])
+					FFi_t = (FFi[timepoint])
+					FF_t = (FF[timepoint])
+					FFp_t = (FFp[timepoint])
+					
+					coordsAfter = <thisPD12,thisPD13,thisPD14>
+					velocity = [trajVel coordsBefore coordsAfter]
+					
+					
+					
+					coordStr = "$SWC"+","+"$EEG_t"+","+"$FFi_t"+","+"$FF_t"+","+"$FFp_t"+","+"$thisPD12"+","+"$thisPD13"+","+"$thisPD14"+","+"$velocity"+","+"$timepoint"
+					addResult swdPath coordStr 'coordList.txt'
+					
+					coordsBefore = <thisPD12,thisPD13,thisPD14>
+				}
+			}
+		}
+		
+	# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	} elseif (action=='-save_fiji_win') {
+		# Write phase difference matrices for ImageJ/Fiji
+		# Also puts names of files from directory into a text file for Fiji script Imagesequence2stack.ijm
+
+		# first, make sure that ../raw/ directory exists, and if not, then create
+		if ([file list resultPath+"raw"].size==0) {
+			file createdir resultPath 'raw'
+		}
+		rawMatrixPath = resultPath+'raw/'
+		
+		if ([file list resultPath+"fiji"].size==0) {
+			file createdir resultPath 'fiji'
+		}
+		ImageJ_FijiMatrixPath = resultPath+'fiji/'	
+		
+		echo Converting phase difference histogram for ImageJ/Fiji
+		
+		# now we must create a text file that lists the path and matrix file name for all 360 degrees of phi1:2
+		resultPath_windowsFormat = rawMatrixPath
+		resultPath_linuxFormat = resultPath_windowsFormat
+		resultPath_linuxFormat[[str substr resultPath_linuxFormat '\\']] := "/"
+		resultPath_windowsFormat[[str substr resultPath '/']] := "\\"		
+		
+		targ = "file_list.txt"
+		# if ([file exist rawMatrixPath+targ]) {
+			# file remove rawMatrixPath+targ
+		# }
+		strm = [file open resultPath_linuxFormat+targ 'a']
+
+		foreach deg12 0:359 {
+			fname = "pd_matrix."+"$deg12" 
+			iwrite phase3Ddist[deg12] resultPath_windowsFormat+fname -a -h
+
+			# adds path and filename to file_list.txt
+			thisfn = resultPath_linuxFormat+fname
+			echo $thisfn :: >>strm
+#			echo DONE with pd1:2 degree $deg12
+		}
+
+		file close strm
+		echo DONE phase difference cube written to disk
+
+	# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	} elseif (action=='-save_fiji_linux') {
+		# Write phase difference matrices for ImageJ/Fiji
+		# Also puts names of files from directory into a text file for Fiji script Imagesequence2stack.ijm
+
+		# first, make sure that ../raw/ directory exists, and if not, then create
+		if ([file list resultPath+"raw"].size==0) {
+			swdPath = resultPath+'raw/'
+			file createdir resultPath 'raw'
+		}
+		rawMatrixPath = resultPath+'raw/'
+
+		if ([file list resultPath+"fiji"].size==0) {
+			file createdir resultPath 'fiji'
+		}
+		ImageJ_FijiMatrixPath = resultPath+'fiji/'	
+		
+		echo Converting phase difference histogram for ImageJ/Fiji
+		
+		targ = "file_list.txt"
+		strm = [file open resultPath_linuxFormat+targ 'a']
+
+		foreach deg12 0:359 {
+			fname = "pd_matrix."+"$deg12" 
+			iwrite phase3Ddist[deg12] rawMatrixPath+fname -a -h
+
+			# adds path and filename to file_list.txt
+			thisfn = rawMatrixPath+fname
+			echo $thisfn :: >>strm
+#			echo DONE with pd1:2 degree $deg12
+		}
+
+		file close strm
+		echo DONE phase difference cube written to disk
+
+	# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	# This option takes ImageJ/Fiji output and converts for use in LW
+	} elseif (action=='-load_fiji') {
+		echo Converting phase difference histogram from ImageJ/Fiji back to LastWave
+		
+		# IMPORTANT !!! - MUST PASS phase3Ddist AS AN EMPTY LIST
+		
+		thisMatrix = Zero(360,360)
+		
+		# test for the existence of the .../lw/ (output of ImageJ) and .../fiji/ directories
+		if ([file list resultPath+"lw"].size==0) {
+			file createdir resultPath 'lw'
+		}
+		lwMatrixPath = resultPath+'lw/'
+		ImageJ_FijiMatrixPath = resultPath+'fiji/'	
+		
+		foreach degree12 0:359 {
+			fname = "pd_matrix."+"$degree12"+".txt"
+			iread thisMatrix ImageJ_FijiMatrixPath+fname -a 360 360
+			phase3Ddist+=[copy thisMatrix]
+			iwrite thisMatrix lwMatrixPath+"pd_matrix."+'$degree12'
+			thisMatrix[:;:] := 0
+#			echo WRITTEN degree $degree12
+		}
+		echo DONE converting data
+	# ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	# This option quickly loads a specified phase difference distribution for use in LW
+	} elseif (action=='-load_lw') {
+		phase3Ddist.size = 360
+		foreach degree 0:359 {
+			this12degree = "pd_matrix."+'$degree'
+			phase3Ddist[degree] = Zero(360, 260)
+			iread phase3Ddist[degree] resultPath+this12degree -a 360 360
+			sigFilter[degree] = max(phase3Ddist[degree])
+		}
+	}
+}

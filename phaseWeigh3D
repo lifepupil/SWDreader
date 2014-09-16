@@ -1,0 +1,30 @@
+# Calculates the phase difference weight factors from phi1:2, phi1:3 and phi1:4 distributions for any PSR passed to it (whether SWC or SWD)
+# phaseWeigh v.1.0
+# phaseWeigh v.1.1 January 30, 2012
+# UPDATE:
+# 1. Now returns the scores for a PSR from each of the 3 phase difference distributions. Valuable for SWC characterization.
+
+# UPDATE (2-28-13):
+# 0. phaseWeigh3D v.1.0 (phaseWeigh v.2.0)
+# 1. phaseWeigh3D is derived from and improvement over original phaseWeigh function
+
+# UPDATE (5-10-13):
+# 1. If there is no phase synchrony in ps12 then it previously wrote 0, however 0 is a valid phase degree, so modified so .ps12 files write -1 if no synch;
+#	added conditional in this function to detect when this occurs.
+
+# UPDATE (7-10-13):
+# 	Added line to permit either ps12 or pd12 signals to be passed to this function by making sure that values always fall between 0 and 359
+
+# UPDATE (4-1-14):
+# - stripped this function down to bare essentials 
+
+setproc phaseWeigh3D {{&signal p12} {&signal p13} {&signal p14} {&listv pd3D}} {
+
+	pdWeights = Zero(p12.size)
+	
+	foreach w 0:pdWeights.size-1 {
+		pdWeights[w] = pd3D[p12[w]][p13[w];p14[w]]
+	}
+	
+	return pdWeights
+}

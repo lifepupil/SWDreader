@@ -1,0 +1,505 @@
+startt = [time current -l]
+if (startt[1]<10) {startt[1] = '0$startt[1]'} else {startt[1] = '$startt[1]'}
+if (startt[2]<10) {startt[2] = '0$startt[2]'} else {startt[2] = '$startt[2]'}
+echo
+echo
+echo EEG analyzer / SWD detector 
+echo  ~f~ 
+echo
+# Christian Richard, Frankel Lab 2012
+# TO DO list at end of document
+
+# UPDATE (12-11-12): found that if I re-ran sf on the same recording the performance would improve. Discovered that remnant of the "harmonic amplitude proportion" filter was that -1 
+# value in the weighings (written into phaseScoreMap) were (a) altering the PSR scores, and (b) if simply changed to +1 then ISI boundaries would be truncated. 
+# SOLUTION: on lines 290 and 325 I reset -1 values to +1.001, just above the +1 cutoff used throw away non-ISI regions. 
+# NOTE: THIS FIX IS MOOT IN VERSIONS OF SF THAT USE PhaseWeigh FUNCTION (i.e. all versions after sf14).
+
+# UPDATE (12-13-12): while trying to figure out why one of the ISI regions did not end at a spike, I discovered that any part of an ISI region that falls over a non-synchrony region
+# will get thrown out. Reason is that phaseScoreMap default setting is 1, the same value assigned to parts of PSRs outside of 1:2 phase synchrony. 
+# During line 359 -> thisChannel[find(thisChannel==1)] :=0 <- these parts of ISI regions get lost.
+# SOLUTION: (a) changed phaseScoreMap default to 0, (b) replace 0's with 1's in phaseScoreMap immediately before using it in the k-means clustering step.
+
+# FOR sf16 or beyond: 
+# 1. The 2-D phase weighing distributions have increased weights at their edges due to a bug that I haven't found yet. Only if the phase values are 359 is this a problem,
+#	but it still needs to be resolved. 
+# 2. In same data structures, I want to experiment with the values of the weights. Currently,(sf15), minimum:maximum values are:
+#	1-3 for 1:2 phase difference distribution, and 1-2 for the 2-D phase distributions. This means there is no penalty for even the least representative
+#	phase values.
+# 3. ISI detection has not been improved since the original version, not for lack of improvements, e.g. spikes must be > mean+SD for the test region so real spikes that
+#	fall below this level will not be counted and will prematurely terminate, and thus truncate, the actual real ISI region.
+# 4. Include the number of joined PSRs, discarded PSRs from duration filter, and false positive percentage of total calls into the results string to write to .csv
+
+# UPDATE (1-7-13): discovered that I had not updated file extensions for phase difference files. Original pre-processing was not integrated into single script, and functions
+# used to generate the ps and pd files were incorrectly labelled, e.g. phase difference 1:3 was saved with file extension of .pd12, and phase difference 1:4 saved as .pd13 initially.
+# File extensions were changed in this version of SWDfinder (see lines 287 and 289 below for the read statements that were updated).
+
+# for sf17f (2-28-13)
+# 1. changing code for phase weight operations to work with 3-D phase difference distribution
+
+# UPDATE (4-3-14):
+# version = sf19b
+# - integrated code to count the number of SWCs in a SWD, and
+# - set a threshold for the minimum number of SWCs that must appear across all EEG channels in a PSR (default is 3, a reasonable but very low bar)
+# - MUST FIX compare2 SO THAT SINGLE SWD CALLS THAT COVER 2 ANNOTATED SWDS DO NOT CONSIDER IT FALSE NEGATIVE
+# - ALSO MUST SET UP allCalls TO BE WRITABLE TO DISK FOR LATER TP VS. FP ANALYSES
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~` 
+
+# >>~~~~~~~~~~~~~~~~~~~~>
+# INSTANCE VARIABLES
+
+# DEBUG unless debugging keep dispFigs set to false (0)
+dispFigs = 1
+singleFile = "29722_091412.lwr"
+if (dispFigs==1 && [var exist finalCall]) {
+	results = ''
+	predictedSWDs = ''
+	delete harmonicXcorrMap
+	delete phaseScoreMap
+	delete kmeansOverlap
+	delete finalCall
+	delete finalPSRs
+	delete scoreMap
+}
+# END DEBUG
+
+sampleRate = 200
+os = 'win'
+dist3Dname = 'pd_matrix'
+commonFolder = "Scn8a_filtered_LP0.3_HP50"
+
+# PSR scoring thresholds
+scoreThresholds = <2500>
+maxPhaseWeight = 10
+maxPhaseVal = 100
+minSWCs = 3
+
+# phase "ISI" variables
+maxVar = 0.15
+minISInum = 2
+maxISIdur = 40
+minISIdur = 20
+
+# harmonics analysis variables
+startXcorr = 13
+endXcorr = 26
+
+# ISI detection
+minimumISInum = 3
+minimumSequentialISInum = 2
+minimumISIdistance = 6
+lowerFreq = 5
+upperFreq = 10
+leastSample = sampleRate/upperFreq
+mostSample = sampleRate/lowerFreq
+varList = {0 0 0 0 0}
+varList[0] = minimumISInum
+varList[1] = minimumISIdistance
+varList[2] = minimumSequentialISInum
+varList[3] = leastSample
+varList[4] = mostSample
+
+# join and duration filter functions
+overlapCutoff = 1
+minimumDuration = sampleRate/2
+minimumBefore = sampleRate/2
+minimumAfter = sampleRate/2
+
+# >>~~~~~~~~~~~~~~~~~~~~>
+# PATHS
+if (os=='win') {
+	commonPath = "E:/"+commonFolder+"/"
+#	commonPath = "C:/Users/Chris/LastWave/1Chris/Frankel/expt0/"
+	phaseWeightPath = "E:/expt1_filtered_LP0.3_HP50/phaseWeight3D/lw/"
+} elseif (os=='linux') {
+	commonPath = "/media/Elements/expt1_filtered_LP0.3_HP50/"
+	phaseWeightPath = "/media/Elements/expt1_filtered_LP0.3_HP50/phaseWeight3D/lw/"
+}
+resultPath = commonPath+"sf19b_debug_results/"
+refPath = commonPath+"ref/"
+annotPath = commonPath+"convAnnot/"
+lwrPath = commonPath+"lwr/"
+psyncPath = commonPath+"psync/"
+hampPath = commonPath+"hamp/"
+hphzPath = commonPath+"hphz/"
+# >>~~~~~~~~~~~~~~~~~~~~>
+# /PATHS
+
+# params for Morlet wavelet transform to generate scalogram
+Morlet_scale = -1
+amin = 2
+vox = 10
+omax = 6
+# params for Morlet wavelet characteristics
+morletOscillations = 6
+# params controling window length and height for Morlet scalogram fft convolution
+minfreq = 7
+maxfreq = 48
+MorletWindowSize = 100
+
+# >>~~~~~~~~~~~~~~~~~~~~>
+# CONSTANTS - do not touch
+# for ISIset
+startX = 0
+ISIdurations = 1
+spikeHeight = 2
+
+# for numdur2 function
+ranges = 0
+duration = 1
+
+# for ref files
+xcov_max = 0
+xcov_freqi = 1
+xcorr_max = 2
+xcorr_freqi = 3
+
+# spreadsheet labels
+labels = "scoreThreshold,S file,A file,\
+ch1 HXC PSRs,ch2 HXC PSRs,ch3 HXC PSRs,ch4 HXC PSRs,ch5 HXC PSRs,ch6 HXC PSRs,\
+ch1 max score,ch1 min score,ch1 meanScore,ch1 TP,ch1 FP,ch1 FN,ch1 TPcoverage,ch1 TP%,ch1 TP/total calls,ch1 FP/total calls,\
+ch2 max score,ch2 min score,ch2 meanScore,ch2 TP,ch2 FP,ch2 FN,ch2 TPcoverage,ch2 TP%,ch2 TP/total calls,ch2 FP/total calls,\
+ch3 max score,ch3 min score,ch3 meanScore,ch3 TP,ch3 FP,ch3 FN,ch3 TPcoverage,ch3 TP%,ch3 TP/total calls,ch3 FP/total calls,\
+ch4 max score,ch4 min score,ch4 meanScore,ch4 TP,ch4 FP,ch4 FN,ch4 TPcoverage,ch4 TP%,ch4 TP/total calls,ch4 FP/total calls,\
+ch5 max score,ch5 min score,ch5 meanScore,ch5 TP,ch5 FP,ch5 FN,ch5 TPcoverage,ch5 TP%,ch5 TP/total calls,ch5 FP/total calls,\
+ch6 max score,ch6 min score,ch6 meanScore,ch6 TP,ch6 FP,ch6 FN,ch6 TPcoverage,ch6 TP%,ch6 TP/total calls,ch6 FP/total calls,\
+final max score,final min score,final meanScore,final TPs,final FPs,final FNs,final TPcoverage,final TP/annotSWDs,final TP/total calls,final FP/total calls,final realSWDs"
+predictedSWDs = ""
+RoSparamStr = 'maxVar_'+'$maxVar'+'_minISInum_'+'$minISInum'+'_maxISIdur_'+'$maxISIdur'+'_minISIdur_'+'$minISIdur'+'_startXcorr_'+'$startXcorr'+'_endXcorr_'+'$endXcorr'+'_sampling_'+'$sampleRate'+'_'
+
+
+
+# >>~~~~~~~~~~~~~~~~~~~~>
+# FUNCTION CALLS
+source numdur2
+source compare2
+source durationFilter2
+source joinPSRs2
+source addResult
+source timeString2
+source phaseWeigh3D
+# >>~~~~~~~~~~~~~~~~~~~~>
+# FILE HANDLING
+
+# <NB>
+# - if there is only a single data file to be analyzed then it must be in its own directory
+# 		otherwise set sigsKey to a string value present in all data file names to be analyzed
+# - for read to work, must be in the target directory otherwise error "ReadSigFile() : Error while opening the file"
+# - file names to be processed must NOT have spaces otherwise their display windows will have a truncated name
+# - also, it appears that file names cannot have '-' characters in them
+# -	changes directory to target directory (where data of interest are located)
+# -	asterisks used as wildcards to pull all matching files into list 'fnames'
+# <NB\>
+
+# sigKeys - keyword present in all filenames of signals to be processed
+# Files with .lwr extension must contain EEG data, one column per electrode pair
+
+sigKey0 = '.lwr'
+
+# puts names of all .lwr files into fnames
+if (dispFigs==0) {
+	fnames = [file list lwrPath+"*$sigKey0*"]
+} elseif (dispFigs==1) {
+	fnames = {singleFile}
+}
+fnames = [listv sort fnames]
+fNum = fnames.size-1
+
+addResult resultPath labels -r
+
+
+# >>~~~~~~~~~~~~~~~~~~~~>
+	echo
+	echo Loading distribution values into 3-D phase difference space
+	phase3Ddist = {}
+	phase3Ddist.size = 360
+	maxPDcount = 0
+	foreach degree 0:359 {
+		this12degree = dist3Dname+'.'+'$degree'
+		phase3Ddist[degree] = Zero(360, 260)
+		iread phase3Ddist[degree] phaseWeightPath+this12degree
+		if (max(phase3Ddist[degree])>maxPDcount) {
+			maxPDcount = max(phase3Ddist[degree])
+		}
+	}
+
+	# normalize weights to max(phase3Ddist[degree])
+	foreach degree 0:359 {
+		phase3Ddist[degree]/=maxPDcount
+		phase3Ddist[degree]*=maxPhaseVal
+	}
+#	foreach degree 0:359 {this12degree = 'phaseDist3D.'+'$degree';;phase3Ddist+=<;>;;iread phase3Ddist[degree] phaseWeightPath+this12degree}
+
+# >>~~~~~~~~~~~~~~~~~~~~>
+# DATA ANALYSIS	
+	# Score threshold loop for ROC curves
+	foreach fs 0:fNum {
+		ISIresults = ''
+		echo reading $fnames[fs]
+		rawEEG = <0;0>
+		iread rawEEG lwrPath+fnames[fs]
+		ISIresults+="$fnames[fs],"
+		predictedSWDs+="$fnames[fs],"
+		
+		mouseFile = fnames[fs]
+		mouseFile[[str substr mouseFile '.lwr']] := ''
+		
+		# reads mouse annotation data into LastWave	
+		testAnnot = <>
+		annotFile = mouseFile+'.tannot'
+		read testAnnot annotPath+annotFile
+		ISIresults+="$annotFile,"
+		echo
+	
+		harmonicXcorrMap = Zero((rawEEG.nrow),(rawEEG.ncol))
+
+		# >>~~~~~~~~~~~~~~~~~~~~>
+		# loops through all electrode pair signals in rawEEG		
+		foreach pair 0:rawEEG.nrow-1 {
+			tt = [time current -l]
+			if (tt[1]<10) {mm = '0$tt[1]'} else {mm = tt[1]}
+			if (tt[2]<10) {ss = '0$tt[2]'} else {ss = tt[2]}
+			
+			ref = <;>
+			iread ref refPath+mouseFile+'_$pair'+'.ref'
+			
+			# note which row of ref is used (see ref file constants above)
+			harmonicXcorrMap[pair;:] = [copy [ref[xcov_max;:]]]
+			delete ref
+		
+			tt = [time current -l]
+			if (tt[1]<10) {mm = '0$tt[1]'} else {mm = tt[1]}
+			if (tt[2]<10) {ss = '0$tt[2]'} else {ss = tt[2]}
+		# single EEG recording loop
+		}
+		
+		phaseScoreMap = Zero((rawEEG.nrow),(rawEEG.ncol))
+		
+		foreach EEGrec 0:rawEEG.nrow-1 {
+			ISIregions = 0
+			hxcThreshold = mean(harmonicXcorrMap[EEGrec;:]) + 0*([stats var harmonicXcorrMap[EEGrec;:]]^0.5)
+			hxcRanges = [numdur2 [copy harmonicXcorrMap[EEGrec;:]] hxcThreshold swd]
+			echo $hxcRanges.size harmonics cross correlation-defined possible SWD regions (PSRs) in signal $[EEGrec+1] of $mouseFile
+			ISIresults+="$hxcRanges.size,"
+
+			pd12 = <> ;; read pd12 psyncPath+mouseFile+'_'+'$RoSparamStr'+'$EEGrec'+'.pd12'
+			pd13 = <> ;; read pd13 psyncPath+mouseFile+'_'+'$RoSparamStr'+'$EEGrec'+'.pd13'
+			pd14 = <> ;; read pd14 psyncPath+mouseFile+'_'+'$RoSparamStr'+'$EEGrec'+'.pd14'
+			
+			foreach PSR 0:hxcRanges.size-1 {
+				p12 = <pd12[hxcRanges[PSR][ranges]]>
+				p13 = <pd13[hxcRanges[PSR][ranges]]>
+				p14 = <pd14[hxcRanges[PSR][ranges]]>
+				pdWeights = [phaseWeigh3D p12 p13 p14 phase3Ddist]
+				phaseScoreMap[EEGrec;[hxcRanges[PSR][ranges]]] = pdWeights
+			}
+		}
+		
+		foreach st 0:scoreThresholds.size-1 {
+			results = ""
+			MAXSCORE = scoreThresholds[st]
+
+			scoreMap = Zero((rawEEG.nrow),(rawEEG.ncol))
+			SWCcountSignal = Zero((rawEEG.nrow),(rawEEG.ncol))
+#			SWDcountSignal = Zero(rawEEG.ncol)
+
+			echo
+			echo ~~~~~~~~~~~~~~~~~~~~~~
+			echo Score threshold = $MAXSCORE
+			echo for mouse $mouseFile
+			results+="$MAXSCORE,"+ISIresults
+				
+			# EEGrec loop to cycle through each EEG signal for means within PSRs to generate ROC curves
+			foreach EEGrec 0:rawEEG.nrow-1 {
+				hphz = <;>
+				phasefname = mouseFile+'_'+RoSparamStr+'$EEGrec'+'.hphz'
+				iread hphz hphzPath+phasefname
+				fundFreq = der([copy hphz[0;:]])*-1
+				delete hphz
+				
+				thisChannel = [copy phaseScoreMap[EEGrec;:]]
+				thesePSRs = [numdur2 thisChannel 1 swd]
+				delete thisChannel
+				
+				maxScorePSRs = 0
+				minScorePSRs = 9999
+				meanScoreChannel = 0
+				
+				if (thesePSRs.size!=0) {
+					foreach i 0:thesePSRs.size-1 {
+
+						swcs = [numdur2 [copy fundFreq[thesePSRs[i][ranges]]] pi swc]
+						foreach j 0:swcs.size-1 {
+							x0 = thesePSRs[i][ranges][@<]
+							score = max((harmonicXcorrMap[EEGrec;(swcs[j][ranges]+x0)])*(phaseScoreMap[EEGrec;(swcs[j][ranges]+x0)]))
+							meanScoreChannel+=score
+							if (max(phaseScoreMap[EEGrec;(swcs[j][ranges]+x0)])>=maxPhaseWeight) {
+								SWCcountSignal[EEGrec;(swcs[j][ranges][@<]+x0)]+=1
+								scoreMap[EEGrec;(swcs[j][ranges]+x0)] := score
+								if (minScorePSRs>score && score!=0) {minScorePSRs = score}
+								if (maxScorePSRs<score) {maxScorePSRs = score}
+							}
+						}
+					}
+					meanScoreChannel = meanScoreChannel/thesePSRs.size
+				}
+				results+='$maxScorePSRs,'
+				results+='$minScorePSRs,'
+				results+='$meanScoreChannel,'
+				echo MAX score= $maxScorePSRs MIN= $minScorePSRs MEAN= $meanScoreChannel
+				channelScores = [copy scoreMap[EEGrec;:]]
+				channelScores[find(channelScores<MAXSCORE)]:=0
+				results = [compare2 testAnnot channelScores results 1]
+				delete thesePSRs
+			# EEGrec loop
+			}
+
+			echo
+			echo Final overlap calculation
+			kmeansOverlap = Zero(rawEEG.ncol)
+			foreach channel 0:5 {
+				echo summing channel $channel
+				if (max(scoreMap[channel;:])!=0) {
+					kmeansOverlap[find(scoreMap[channel;:]>0)] = kmeansOverlap[find(scoreMap[channel;:]>0)] + 1
+				}
+			}
+			kov = [copy kmeansOverlap]
+			echo Duration filtering
+			if (max(kmeansOverlap)>0) {
+				durationFilter2 kmeansOverlap minimumDuration minimumBefore minimumAfter overlapCutoff sampleRate
+				joinPSRs2 kmeansOverlap sampleRate
+			}		
+
+			finalPSRs = [numdur2 [copy kmeansOverlap] 1 swd]
+			maxScoreFinal = 0
+			minScoreFinal = 9999
+			meanScoreFinal = 0
+			finalCall = Zero(rawEEG.ncol)
+			allCalls = Zero(rawEEG.ncol)
+			
+			if (finalPSRs.size!=0) {
+				foreach i 0:finalPSRs.size-1 {
+					score = max(scoreMap[:;finalPSRs[i][ranges]])
+					allCalls[finalPSRs[i][ranges]]:=score
+					meanScoreFinal+=score
+#					SWDcountSignal[finalPSRs[i][ranges]] := sum(SWCcountSignal[finalPSRs[i][ranges]])
+					if (score>=MAXSCORE && sum(SWCcountSignal[:;(finalPSRs[i][ranges])])>=minSWCs) {
+						finalCall[finalPSRs[i][ranges]]:=score
+					}						
+					if (minScoreFinal>score && score!=0) {minScoreFinal=score}
+					if (maxScoreFinal<score) {maxScoreFinal=score}
+				}
+				meanScoreFinal = meanScoreFinal/finalPSRs.size
+			}	
+			results+='$maxScoreFinal,'
+			results+='$minScoreFinal,'
+			results+='$meanScoreFinal,'
+					
+			afterDJ = 0
+			if (afterDJ==1) {
+				echo Duration filtering
+				if (max(finalCall)>0) {
+					durationFilter2 finalCall minimumDuration minimumBefore minimumAfter overlapCutoff sampleRate
+					joinPSRs2 finalCall sampleRate
+				}
+			}
+			
+			resultsAll = [compare2 testAnnot finalCall results 1]	
+			real = [numdur2 [copy testAnnot] 1 swd]
+			results = resultsAll+"$real.size"
+			delete real
+			addResult resultPath results -r
+#			addResult resultPath [timeString2 finalCall testAnnot predictedSWDs sampleRate] -W
+		# scoring loop
+		}
+			
+		
+		echo DONE $mouseFile
+		echo =========================================
+		if (dispFigs==0) {
+#			write finalCall resultPath+mouseFile+'_pweight'+'$maxPhaseWeight'+'_score'+'$MAXSCORE'+'.fcall'
+			results = ''
+			predictedSWDs = ''
+			delete harmonicXcorrMap
+			delete phaseScoreMap
+			delete kmeansOverlap
+			delete finalCall
+			delete finalPSRs
+			delete scoreMap
+			delete allCalls
+		} else {
+			dx = 1
+			ta = testAnnot*500
+			taa = [copy ta]
+			taa.dx = dx
+			
+			
+			re1 = [copy rawEEG[0;:]]
+			re1.dx = dx		
+			re2 = [copy rawEEG[1;:]]
+			re2.dx = dx
+			re3 = [copy rawEEG[2;:]]
+			re3.dx = dx
+			re4 = [copy rawEEG[3;:]]
+			re4.dx = dx
+			re5 = [copy rawEEG[4;:]]
+			re5.dx = dx
+			re6 = [copy rawEEG[5;:]]
+			re6.dx = dx
+					
+			kcdisp = One(ta.size)*MAXSCORE
+			negta = testAnnot*MAXSCORE*-1
+			disp Sigfeatures rawEEG[0;:] harmonicXcorrMap phaseScoreMap scoreMap SWCcountSignal {{allCalls kcdisp finalCall negta}} -..6 -fg 'blue' -..7 -fg 'red' -..8 -fg 'green' -..9 -fg 'red'
+			disp EEGstuff re1 re2 re3 re4 re5 re6 taa -..7 -fg 'red'
+
+#	t = 5200:6200 ;; ch = 5 ;; pm = Zero(2,t.size) ;; sm = Zero(2,t.size) ;; pm[1;:] = phaseScoreMap[ch;t] ;; sm[1;:] = scoreMap[ch;t] ;; disp SWD_example rawEEG[ch;t] harmonicXcorrMap[ch;t] pm sm
+#	t = 860400:861400 ;; ch = 5 ;; pm = Zero(2,t.size) ;; sm = Zero(2,t.size) ;; pm[1;:] = phaseScoreMap[ch;t] ;; sm[1;:] = scoreMap[ch;t] ;; disp SWD_example rawEEG[ch;t] harmonicXcorrMap[ch;t] pm sm
+
+#	gabrg2 35570_052413
+#	t = 641600:642600 ;; ch = 1 ;; pm = Zero(2,t.size) ;; sm = Zero(2,t.size) ;; pm[1;:] = phaseScoreMap[ch;t] ;; sm[1;:] = scoreMap[ch;t] ;; disp SWD_example rawEEG[ch;t] harmonicXcorrMap[ch;t] pm sm
+#	t = 236850:238340 ;; ch = 1 ;; pm = Zero(2,t.size) ;; sm = Zero(2,t.size) ;; pm[1;:] = phaseScoreMap[ch;t] ;; sm[1;:] = scoreMap[ch;t] ;; disp SWD_example rawEEG[ch;t] harmonicXcorrMap[ch;t] pm sm
+		}
+}
+
+echo
+echo ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+echo PROGRAM STARTED at $startt[0]:$startt[1]:$startt[2]
+endt = [time current -l]
+if (endt[1]<10) {endt[1] = '0$endt[1]'} else {endt[1] = '$endt[1]'}
+if (endt[2]<10) {endt[2] = '0$endt[2]'} else {endt[2] = '$endt[2]'}
+echo PROGRAM ENDED at $endt[0]:$endt[1]:$endt[2]
+echo ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+startend = {startt endt}
+listv cwrite startend resultPath+'startend' 
+
+# TO DO:
+# DONE 1.	TEST BETWEEN FILTERED AND NONFILTERED EEG
+# 2.	FIX POWER CURVE PARAMETERS
+# 3.	Make function for pairwise signal comparisons
+# DONE 4.	Make write/read functions to save/open all data in binary
+# DONE 5. 	Edit FFT convolution function to do scalogram cross-section fits with 'octave'-shaped window
+# DONE 6.	Put FFT convolution (power) calculations into image objects to save memory (are they more efficient?)
+# DONE 7.	How to open a data file with variable number of columns?
+# DONE 8.	How to re-use same annotation file, e.g. - for #1, and make sure that correct annotation used?
+# DONE 9.	How to save WT scalogram so that one does not need to waste time recalculating it 
+# DONE 10.	Make sure that algorithm flow is efficient for single threshold calculations for (if and when) reliable threshold is found
+# 11. 	Design and write a consensus SWD calculating function
+# 			a.	Include a probability of true positive/true negatives to permit quick identification of 'iffy' calls
+# DONE 12.	Create a parameter list obj to make passing variables easier, and to store/save all parameter settings used in an analysis
+# 13.	Create function that returns an image when passed a list of (thresholded) signals
+# DONE 14.	Create function that returns scalogram cross-sections
+# 15.	Create function to convert a signal into a wavelet, e.g. turn 'ideal' SWD from file into wavelet
+#			a.	how to access &array thisMorlet?
+#			a. 	answer = thisMorlet = &array, array list thisMorlet = (.amin &num )(.ix &proc) (.xmin &num)(.rx &proc) (.xmax &num) (.name &string)
+#				create an array with these components, then fill appropriately. 
+#				NB - MUST HAVE FORMULAE FOR MAKING WAVELET TO PUT INTO .rx AND .ix (WHAT IS .ix OF NON-COMPLEX NUMBER? ZERO?)
+# DONE 16.	Create function that zeros out sequences of 1's that are too short to be SWDs, and replaces 0's with 1's to fill gaps between adjacent (possible) SWDs that are too close together
+	
+# CODE SNIPPETS
+# Makes list of all existing variables
+# j = [var list]
+# jl = {}
+# foreach i 0:j.length-1 {jl = jl + j[*list,i]}
+
+

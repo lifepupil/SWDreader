@@ -1,0 +1,91 @@
+# does harmonic analysis and returns signal with indices of maximum correlation
+# EDIT 6/26/12	- change ref into 2 row image to store both the reference index where maximum correlation was and the correlation value itself
+# EDIT 7/5/13	- added normalized cross-correlation to 3rd row (was already added in an earlier version of harmonicRefs that is missing)
+#					on the ratio of harmonics-to-nonharmonics energy
+#		This was done to duplicate the harmonicRefs function on Julie (Khalil lab machine)
+# EDIT 9/5/13	- updating this function to include additional measures related to instantaneous power. 
+
+#	IMPORTANT NOTE - HarmonicVals relies on ref[1;:] containing the frequency index to find correct positions in phase and power scalograms where
+#					putative harmonics are located. MUST KEEP THESE ASSIGNMENTS FOR SWDFINDER TO WORK CORRECTLY
+#	IMPORTANT NOTE #2 -	Be mindful of the effect of artifactual power at ~60 Hz on the power re-weighing scheme if using unfiltered EEG. 
+#						As long as the artifact power is constant, the weighing process should not be negatively affected,
+#						however, total power sums for only the real EEG signal will not be accurate unless artifactual power is subtracted.
+#						This can be accomplished by restricting the range of summed values in the totalPower variable, 
+#						e.g. totalPower = sum(vertSliceA[0:49]) is total power from 1.6 Hz to 50 Hz, 
+#							where signal range is 0:59 and vertSlice[50:59] is power from 53.6 Hz to 100 Hz
+#						AND by changing the nonPeakNorm so that the correct reweighing normalization factor is used,
+#						i.e. if 60 frequencies are represented (omax*vox), 4 of them are harmonics and 56 are non-harmonic, so nonPeakNorm = 56/4 = 14
+#						so if only 50 frequencies are represented, then nonPeakNorm = 46/4 = 11.5
+# UPDATE (4-2-14):
+# - removed padd as recent work done on fundamental frequency analysis (with ENS,Lyon) indicated that it does no net good to harmonics detection
+# - removed post-processing of cross-covariance weighted means because (1) it's not clear whether it does any good, and (2) it significantly increases computing time
+# - this version (harmonicRefs2) now only requires ref image to have 4 rows rather than 6. This saves disk space which is presently at a premium, and there are no other
+#	values that it would be advantageous to extract during this process that are not already being extracted.
+
+# FOR QUICK REFERENCE OF ROW VALUES IN ref file
+# i_xcov = 0
+# ffi_xcov = 1
+# i_xcorr = 2
+# ffi_xcorr = 3
+
+setproc harmonicRefs2 {{&image ampScal} {&image ref} {&num start} {&num end}} {
+
+	# Values for harmonicPos are only valid for WT scalograms generated using amin=2, omax = 6, vox=10
+	nonPeakNorm = 14
+	harmonicPos = <1,11,17,21>	
+	harmonicFilter = Zero(23)
+
+	foreach P 0:harmonicPos.size-1 {harmonicFilter[harmonicPos[P]] := 1}
+	
+	tt = [time current -l]
+	if (tt[1]<10) {mm = '0$tt[1]'} else {mm = tt[1]}
+	if (tt[2]<10) {ss = '0$tt[2]'} else {ss = tt[2]}
+	echo harmonicRefs STARTED at $tt[0]:$mm:$ss
+
+	# this signal holds the instantaneous power spectrumm
+	vertSliceA = Zero(ampScal.nrow)
+	# this signal holds the results of the cross-correlation (or cross-covariance)
+	slicePower = Zero(end-start+1)
+
+	foreach t 0:ampScal.ncol-1 {
+	
+		if (tt[1]<[time current -l][1]) {
+			tt[1] = [time current -l][1]
+			if (tt[1]<10) {mm = '0$[time current -l][1]'} else {mm = [time current -l][1]}
+			echo At $[time current -l][0]:$mm:00 $t out of $ampScal.ncol samples complete
+			tt[1]=tt[1]+1
+		}
+	
+		vertSliceA = ampScal[:;t].tosignal
+		
+		if (max(vertSliceA)==0 && min(vertSliceA)==0) {
+			ref[0:1;t] = ~<-2,-2>
+		} else {
+			totalPower = sum(vertSliceA)
+			
+			# this use of the corr function returns the cross-covariance between instantaneous power spectrum and harmonic filter
+			corr vertSliceA harmonicFilter slicePower start end -n
+			
+			# this returns the cross-covariance maximum after re-weighing based on harmonic/nonharmonic power ratio
+			ref[0;t] = slicePower[find(slicePower==max(slicePower))]
+			
+			# this returns the index (convertable into frequency) at which the best candidate for fundamental frequency is found
+			ref[1;t] = slicePower.X[find(slicePower==max(slicePower))][0]
+			
+			# this calculates and stores cross-correlation values (for comparison with cross-covariance)
+			corr vertSliceA harmonicFilter slicePower start end
+			
+			ref[2;t] = slicePower[find(slicePower==max(slicePower))][0]
+			ref[3;t] = slicePower.X[find(slicePower==max(slicePower))][0]
+				
+		}
+	}
+	
+	tt = [time current -l]
+	if (tt[1]<10) {mm = '0$tt[1]'} else {mm = tt[1]}
+	if (tt[2]<10) {ss = '0$tt[2]'} else {ss = tt[2]}
+	echo harmonicRefs DONE at $[time current -l][0]:$mm:$ss
+
+	return
+
+}

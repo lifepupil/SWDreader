@@ -1,0 +1,39 @@
+# takes sample number and converts to hh:mm:ss format as &string
+
+setproc timeString2 {{&signal calls} {&signal reals} {&string predictedSWDs} {&num sampleRate}} {
+	 
+	predicted = [numdur2 [copy calls] 1 swd]
+	
+	foreach p 0:predicted.size-1 {
+		hr1 = floor(predicted[p][0][0] / (sampleRate * 60 * 60))
+		min1 = floor((predicted[p][0][0] - (hr1 * (sampleRate * 60 * 60))) / (sampleRate * 60))
+		sec1 = floor((predicted[p][0][0] - (hr1 * (sampleRate * 60 * 60)) - (min1 *(sampleRate * 60))) / sampleRate)
+		ms1 = round(((predicted[p][0][0] - (hr1 * (sampleRate * 60 * 60)) - (min1 *(sampleRate * 60)) - (sec1 * sampleRate)) / sampleRate)  * 100)
+		
+		hr2 = floor(predicted[p][0][@>] / (sampleRate * 60 * 60))
+		min2 = floor((predicted[p][0][@>] - (hr2 * (sampleRate * 60 * 60))) / (sampleRate * 60))
+		sec2 = floor((predicted[p][0][@>] - (hr2 * (sampleRate * 60 * 60)) - (min2 *(sampleRate * 60))) / sampleRate)
+		ms2 = round(((predicted[p][0][@>] - (hr2 * (sampleRate * 60 * 60)) - (min2 *(sampleRate * 60)) - (sec2 * sampleRate)) / sampleRate)  * 100)
+		
+		if (hr1<10) {hr1 = "0$hr1"} else {hr1 = "$hr1"}
+		if (hr2<10) {hr2 = "0$hr2"} else {hr2 = "$hr2"}
+		
+		if (min1<10) {min1 = "0$min1"} else {min1 = "$min1"}
+		if (min2<10) {min2 = "0$min2"} else {min2 = "$min2"}
+		
+		if (sec1<10) {sec1 = "0$sec1"} else {sec1 = "$sec1"}
+		if (sec2<10) {sec2 = "0$sec2"} else {sec2 = "$sec2"}
+
+		if (ms1<10) {ms1 = "0$ms1"} else {ms1 = "$ms1"}
+		if (ms2<10) {ms2 = "0$ms2"} else {ms2 = "$ms2"}
+		
+		if (any(reals[predicted[p][0]])==1) {
+			predictedSWDs += "<* $hr1:$min1:$sec1"+"."+"$ms1 - $hr2:$min2:$sec2"+"."+"$ms2 *> ,"
+		} else {
+			predictedSWDs += "$hr1:$min1:$sec1"+"."+"$ms1 - $hr2:$min2:$sec2"+"."+"$ms2 ,"
+		}
+	}
+	
+	# addString expects a &string
+	return predictedSWDs
+}

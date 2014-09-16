@@ -1,0 +1,14 @@
+
+# March 5, 2014
+# Function tailored narrowly to calculate the phase difference for an entire signal (contrast with pd_t)
+# - takes radians, not degrees
+# - returns degrees ranging from 0-359
+
+setproc pd_s {{&signal Hz0} {&signal Hz1} {&num m}} {
+			
+	# Phase difference calculations on-the-fly
+	d1m = (m*Hz0 - Hz1)*(180/pi)
+	d = (360*(ceil(abs(min(d1m)/360))))
+	dd12 = (d1m + d)%360
+	return dd12
+}

@@ -1,0 +1,100 @@
+# HarmonieAnnot_LW
+# version 2.0 December 31, 2012
+# UPDATES:
+# 1. This version is integrated into main script for all file generation for pre-processing that SWDfinder relies on.
+# 2. IMPORTANT *** the order of mouse IDs in the file name must match the order of mouse numbers, 
+#	e.g. 3 from "Clear SWD M3" expects the mouse ID is 29725 when the file name is "29723 29724 29725 29726 091312.csv".
+#	To protect from mouseIDs being assigned to the wrong annotations the mouse number and mouseID are stored in the .name field of eacf output annotation file.
+# 3. This version integrates the processAnnotation step that previously had to be run separately from this function.
+
+# version 1.0, Nov 8, 2012
+# this function breaks the Harmonie output text file into however many mouse sessions are embedded within it
+
+# UPDATE (6-23-14):
+# - OVERHAUL OF THIS FUNCTION
+# - excluding for now alternate file name protocols of Harmonie annotation reports; only file names with <mouseID> <date of recording>.csv will process correctly
+
+setproc HarmonieAnnot_LW {{&string readPath} {&string writePath} {&num sessionDuration}} {
+
+	source processAnnotation
+
+	# CONSTANTS
+	mouseID = 0
+	startSamples = 1
+	samplesLong = 2
+	miscAnnotSchwag = 3
+	
+	# Makes list of file names in readPath. Note that code assumes that annotation files are saved as .csv files
+	Afiles = [file list readPath+'*.csv']
+	Afiles = [listv sort Afiles]
+	
+	# this file loop
+	foreach f 0:Afiles.size-1 {
+	
+		# First we want to pull the mouse IDs and date of recording out of the file name for "Afiles[f]"
+		# Code assume that annotation file name contains mouse IDs, and that last value before .csv is the date of recording, e.g. 091312,
+		# e.g. "29723 29724 29725 29726 091312.csv"
+		# The next lines pull the mouseIDs and date of recording from the raw data file name, e.g. "29723"
+		
+		mouseIDs = {}
+		foreach mouse Afiles[f] {
+			mouseIDs += mouse
+		}
+		
+		# assumes that last value in mouseIDs list is the date in mmddyy format
+		recDate = mouseIDs[@>]
+		mouseIDs = mouseIDs[0:(mouseIDs.length-2)]
+
+		# remove .csv from date of recording string
+		recDate[[str substr recDate ".csv"]] := ''
+			
+		# Next we open the file "Afiles[f]" and get the mouse IDs within the file (M1, M2, ... Mn where typically n<=4)
+		echo
+		echo Opening $Afiles[f]
+		Adata = [listv cread readPath+Afiles[f] s x x f x f * -s 1 -S ',']
+
+		# this assumes that the order of mouse IDs from the annotation report file name are associated with the ordinals, e.g. "M1" for first mouseID in file name
+		foreach i 0:Adata[mouseID].size-1 {
+			if (Adata[mouseID][i]!='') {
+				
+				# Correct extraction assumes that there is only a single 'M' in the mouse ID labels, e.g. "Clear SWD Mxx", "Seizure Length Mxx" 
+				# Mindex variable gets string index of M, e.g. from "Clear SWD M3"
+				Mindex = [str match Adata[mouseID][i] "M"][0]
+				Adata[mouseID][i] = Adata[mouseID][i][(Mindex+1):].tonum
+				
+			} else {
+				Adata[mouseID][i]=0
+				Adata[startSamples][i]=0
+				Adata[samplesLong][i]=0
+				Adata[miscAnnotSchwag][i]=0
+			}
+		}
+
+		Adata[mouseID] = Adata[mouseID].tosignal
+		Adata[startSamples] = Adata[startSamples].tosignal
+		Adata[samplesLong] = Adata[samplesLong].tosignal
+		mouseNum = max(Adata[mouseID])	
+
+		# This loop separates out each annotation region by mouse and saves results (converted annotation ready for LW) to file
+		foreach mn 1:mouseNum {
+			if (<find(Adata[mouseID]==mn)>.size>0) {
+				starts = Adata[startSamples][<find(Adata[mouseID]==mn)>]
+				lengths = Adata[samplesLong][<find(Adata[mouseID]==mn)>]
+				hlist = {starts lengths}
+			} else {
+				hlist = {{0} {0}}
+			}
+				
+			# save annotation as "<mouse ID>_<date of recording>.tannot"
+			# since mn in annotation report file starts at 1, must subtract 1 from mn to get correct mouseIDs index
+			thisName = mouseIDs[mn-1]+"_"+recDate+".tannot"
+			convAnnot = [processAnnotation hlist sessionDuration]
+			convAnnot.name = thisName
+			echo Writing $thisName
+			write convAnnot writePath+thisName	
+			clear hlist
+		}
+	
+		delete Adata
+	}
+}

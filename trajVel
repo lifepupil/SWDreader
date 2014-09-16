@@ -1,0 +1,21 @@
+# trajVel - function to calculate velocity (i.e. distance travelled in 5 ms increments) between adjacent coordinates of SWD phase difference trajectory 
+# April 8, 2014
+
+# UPDATE (4-10-14):
+# - Modified to correct false increases in velocity when trajectories cross 359-to-0 degree boundaries
+# - The largest possible distance should be (180^2 + 180^2 + 180^2)^0.5 = 311.77
+# - Tested coordinates that should have shorter distances with wrap. Tested distances appear to be correct
+
+setproc trajVel {{&signal coord1} {&signal coord2}} {
+	# CONSTANTS <
+	x_pd12 = 0
+	y_pd13 = 1
+	z_pd14 = 2
+	# CONSTANTS >
+	
+	coord1 = abs(coord1-180)
+	coord2 = abs(coord2-180)
+	
+	distance = sqrt((coord1[x_pd12]-coord2[x_pd12])^2 + (coord1[y_pd13]-coord2[y_pd13])^2 + (coord1[z_pd14]-coord2[z_pd14])^2)
+	return distance
+}

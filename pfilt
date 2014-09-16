@@ -1,0 +1,28 @@
+	
+# pfilt - a function that returns a signal for extracting scalogram values based on harmonic filter
+#			and desired frequency band width for each of the four harmonics
+# December 6, 2013
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+setproc pfilt {{&signal harmonicPos} {&signal lowerFwidth} {&signal upperFwidth}} {
+
+	rangeSum = sum(lowerFwidth)+sum(upperFwidth)+harmonicPos.size
+	ridgeFilter = Zero(rangeSum)
+	
+	shift = 0
+	
+	foreach i 0:harmonicPos.size-1 {
+		# indices for ith harmonic
+		hIndices = <harmonicPos[i]-lowerFwidth[i]:harmonicPos[i]+upperFwidth[i]>
+		hiRng = hIndices.X[@<]:hIndices.X[@>]
+		shifted_hiRng = hiRng+shift
+		shift += hIndices.size
+		
+		start = shifted_hiRng[@<]
+		end = shifted_hiRng[@>]
+		ridgeFilter[start:end] = hIndices
+	}
+	
+	return ridgeFilter
+}

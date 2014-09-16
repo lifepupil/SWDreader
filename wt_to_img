@@ -1,0 +1,16 @@
+# wt_to_img
+# May 11, 2012 - changed function so that low frequencies written first. Harmonic x-corr will now be seeking from low to higher frequencies rather than the reverse which may have caused errors
+
+setproc wt_to_img {{&wtrans wt} {&imagei mx}} {
+
+scaleNum = mx.nrow
+
+# populate image with data from wavelet scalogram
+foreach i 0:scaleNum-1 {
+	ov = [index_to_ov i wt.nvoice]
+	mx[@>-i;:] = wt.D[ov]
+}
+
+return mx
+
+}
