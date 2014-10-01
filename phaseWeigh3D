@@ -1,6 +1,24 @@
 # Calculates the phase difference weight factors from phi1:2, phi1:3 and phi1:4 distributions for any PSR passed to it (whether SWC or SWD)
 # phaseWeigh v.1.0
 # phaseWeigh v.1.1 January 30, 2012
+# Copyright (C) 2014 Christian Richard
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/gpl.html>. 
+
+# Author contact info:
+# lifepupil@gmail.com
+
 # UPDATE:
 # 1. Now returns the scores for a PSR from each of the 3 phase difference distributions. Valuable for SWC characterization.
 
