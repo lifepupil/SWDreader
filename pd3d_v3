@@ -5,6 +5,24 @@
 # where <phi1:2,phi1:3,phi1:4> for each time-point (a) within a known SWD (from annotation),
 # and (b) within a region where phase differences between 1st and 2nd harmonic frequencies are ~constant
 #
+# Copyright (C) 2014 Christian Richard
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/gpl.html>. 
+
+# Author contact info:
+# lifepupil@gmail.com
+
 # TO DO (2-28-13):
 # 1. add lines to write matrices in 3-D phase difference distribution
 # 2. convert this into a callable function (phaseDist3D) for use in main1 pre-processing script
