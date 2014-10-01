@@ -5,8 +5,24 @@ echo
 echo SWDfinder Data Pre-processing
 echo ~f~ version 1.0 created December 31, 2012
 echo 
+# Copyright (C) 2014 Christian Richard
 
-# STILL BETA !!!
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/gpl.html>. 
+
+# Author contact info:
+# lifepupil@gmail.com
+
 # - must cross check values in {ref tannot files} with their expt1 counterparts to make sure they are identical,
 # - investigate Channel Index in annotation file to see whether they correspond to channel where SWD was noted by Wayne, Verity, &c.
 #	if yes, then these values can be used to increase specificity of the 'best' SWDs from which to do reverse engineering type project.
