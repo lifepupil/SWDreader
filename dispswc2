@@ -1,0 +1,79 @@
+# called by swcst2 to display SWCs
+ 
+# Copyright (C) 2014 Christian Richard
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/gpl.html>. 
+
+# Author contact info:
+# lifepupil@gmail.com
+
+setproc dispswc2 {{&listv SWC_EEGlist} {&listv SWC_TrajectoryList} {&listv SWC_PowerList} {&listv SWC_IdentifierList} {&listv coord} {&num figureLimit} {&num windowLimit}} {
+	# CONSTANTS <
+	phi_12 = 0
+	phi_13 = 1
+	phi_14 = 2
+	# CONSTANTS <
+		
+		# add internal legend
+		foreach swc 0:SWC_TrajectoryList.size-1 {
+			pdmx = One(3,(SWC_TrajectoryList[swc].ncol+2))
+			pdmx[:;:@>-2] = SWC_TrajectoryList[swc]
+			pdmx[:;@>] = ~<359,180,0>
+			SWC_TrajectoryList[swc] = pdmx
+		}
+		
+		# create displays with 5 SWCs or less on each 
+		# figureLimit = 5
+		# windowLimit = 12
+		windowNum = floor(SWC_EEGlist.size/figureLimit)
+		
+		coordStr = "$coord[phi_12][@<]:$coord[phi_12][@>] x $coord[phi_13][@<]:$coord[phi_13][@>] x $coord[phi_14][@<]:$coord[phi_14][@>]"
+		
+		if (windowNum==0) {
+			figureIndex = <I(SWC_EEGlist.size%figureLimit)> 
+			evalStr = "disp l "
+			foreach swc 0:figureIndex.size-1 {
+				i = figureIndex[swc]
+				evalStr+="{SWC_EEGlist[$i] SWC_TrajectoryList[$i] SWC_PowerList[$i]} "
+			}
+			evalStr+="-title \"$coordStr\""
+			eval %%$evalStr
+		} else {
+			figureIndex = <I(figureLimit)>
+			if (windowNum>windowLimit) {windowNum = windowLimit}
+			foreach set 1:windowNum {
+				evalStr = "disp l"+"$set "
+				foreach swc 0:figureLimit-1 {
+					i = figureIndex[swc]
+					evalStr+="{SWC_EEGlist[$i] SWC_TrajectoryList[$i] SWC_PowerList[$i]} "
+				}
+				evalStr+="-title \"$coordStr\""
+				eval %%$evalStr
+				figureIndex+=figureLimit
+			}
+			
+			if (SWC_EEGlist.size%figureLimit!=0 && windowNum<windowLimit) {
+				set+=1			
+				evalStr = "disp l"+"$set "
+				figureIndex = <I(SWC_EEGlist.size%figureLimit)>
+				figureIndex+=(windowNum*figureLimit)
+				foreach swc 0:figureIndex.size-1 {
+					i = figureIndex[swc]
+					evalStr+="{SWC_EEGlist[$i] SWC_TrajectoryList[$i] SWC_PowerList[$i]} "
+				}
+				evalStr+="-title \"$coordStr\""
+				eval %%$evalStr
+			}
+		}
+}

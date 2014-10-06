@@ -1,0 +1,329 @@
+# swcst2
+# SWC subtype extraction and comparison
+# Copyright (C) 2014 Christian Richard
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/gpl.html>. 
+
+# Author contact info:
+# lifepupil@gmail.com
+
+# UPDATE (4-17-14):
+# - Added code to generate a set of windows containing all discovered SWCs automatically
+# - I did this to get a handle on what shapes are found at different regions of phase difference space
+#	because of the challenge associated with using a space defined by all positive integers (array indices 
+#	cannot be less than 0) from 0 to 359 when the raw phase difference data ranges from -180 to +179 degrees.
+# - To get at this problem, I made an artificial SWD of squarewave SWCs to generate the phase scalogram and find out
+#	what the raw phase values are prior to phase difference calculation. The phases at zero crossings of the 
+#	harmonic frequencies conformed to what I expected:
+#		h1 = 0
+#		h2 = 180
+#		h3 = 0
+#		h4 = 180
+#	However, attempts to replot the phase difference distribution to account for the 180 shift have resulted
+#	in identically positioned distributions - I did not expect that and presently cannot explain it. 
+#	Hence this update as a way to more directly probe the EEG data.
+# 1. must find SWCs that contain desired coordinates (or coordinate ranges)
+# 2. then extract them
+# 3. then calculate pairwise similarity matrix of SWC trajectories
+# 4. then sort based on similarity
+# 5. plot for data visualization
+#	- output into text file to import into R
+#	FIGURE IDEAS:
+#	- pairwise matrix with actual SWCs labelling rows
+#	- 
+#	- highlight timepoint(s) within SWC where desired coordinates were found
+#
+# 5. CREATE NEW FUNCTION THAT GENERATES SEARCH COORDINATES FOR POLYGON REGIONS WHOSE VERTICES ARE DEFINED BY 8 POINTS (OR A LINE BETWEEN ANY TWO POINTS)
+#
+# UPDATE (5-4-14):
+# MORE TO DOS -
+# - add variance, max-min, mean across timepoints for all 3 phase differences and all 4 harmonic powers to identifier string
+# - calculate frequency based on number of timeoints in SWC and add to identifier string
+# - put action switches into function calls for channelRange, loadPrereqs, loadPD3D and findSWCs
+# - added SWCmetrics option to (eventually) generate SWC duration histograms, create SWC overlap figures, and temporal positions of SWCs
+
+#	setproc swcst {{&signal coord} {&string mousePath} {&string mouseFile} {&num channel}} {
+setproc swcst2 {{&num offset} {&num x} {&num y} {&num z} {&listv fullList}} {
+
+	commonFolder = "Gabrg2_filtered_LP03_HP50" 
+	refPower = 0.3
+	channelRange = 0:5
+	loadPrereqs = 1
+	loadPD3D = 0
+	getSWCcount = 1
+	findSWCs = 1
+		displaySWCs = 0
+			figureLimit = 5
+			windowLimit = 20
+	SWCmetrics = 1
+		specifiedFrequencyIndex = 0
+		freqIndex = 30
+		pureWave = 0
+		pureSpikeP = 0
+			minFFpower = 0.1
+		pureSpikeV = 0
+			minVoltage = -250
+		averageSWC = 1
+
+		source numdur2
+		source addResult
+		source dispswc
+		source addResult
+		source SWCmetrics
+		
+	if (loadPrereqs==1) {
+		commonPath = "F:/" + "$commonFolder" + "/"
+		lwrPath = commonPath+"lwr/"
+		AnnotPath = commonPath+"convAnnot/"
+		psyncPath = commonPath+"psync/"
+		hphzPath = commonPath+"hphz/"
+		hampPath = commonPath+"hamp/"
+		
+		echo STRAIN: $commonFolder
+		updateStrFname = "$commonFolder"+"_"+"$offset"+"_"+"$x"+"_"+"$y"+"_"+"$z"+"_RECORD.txt"
+		
+		# to load raw trajectories 
+		phaseWeightPath = commonPath+"phaseWeight3D/pd3dSWC/raw/"
+
+		# to load Gaussian blurred trajectories 
+	#	phaseWeightPath = commonPath+"phaseWeight3D/lw/"
+		
+		# variables for RoSparamStr
+		maxVar = 0.15
+		minISInum = 2
+		maxISIdur = 40
+		minISIdur = 20
+		startXcorr = 13
+		endXcorr = 26
+		sampleRate = 200
+		RoSparamStr = 'maxVar_'+'$maxVar'+'_minISInum_'+'$minISInum'+'_maxISIdur_'+'$maxISIdur'+'_minISIdur_'+'$minISIdur'+'_startXcorr_'+'$startXcorr'+'_endXcorr_'+'$endXcorr'+'_sampling_'+'$sampleRate'+'_'
+		
+		# CONSTANTS <
+		pd12_i = 0
+		pd13_i = 1
+		pd14_i = 2
+		ranges = 0
+		# CONSTANTS <
+	}
+
+	if (loadPD3D==1) {
+		phase3Ddist = {}
+		phase3Ddist.size = 360
+		maxPD12 = Zero(360)
+		densityPD12 = Zero(360)
+		foreach degree 0:359 {
+			this12degree = 'pd_matrix.'+'$degree'
+			phase3Ddist[degree] = Zero(360, 260)
+			iread phase3Ddist[degree] phaseWeightPath+this12degree -a 360 360
+			maxPD12[degree] = max(phase3Ddist[degree])
+			densityPD12[degree] = sum(phase3Ddist[degree])
+		}
+		mmx = max(maxPD12)
+		dmx = max(densityPD12)
+		
+		echo max coordinate across phi1:2 axis = $mmx
+		echo max density across phi1:2 axis = $dmx
+		mx = maxPD12.X[find(maxPD12==mmx)][0]
+		titleStr = "$mx $mmx"
+		disp PD3D phase3Ddist[mx] -title "$titleStr"
+		disp PHI12_MAX_DENS maxPD12 densityPD12
+		return phase3Ddist
+	}
+
+	if (getSWCcount==1) {	
+		allSWCnum = 0
+		allSWDnum = 0
+		fNames = [file list lwrPath+"*.lwr"]
+		fNames = [listv sort fNames]
+		
+		foreach session 0:fNames.size-1 {
+			mouseFile = fNames[session]
+			mouseFile[[str substr mouseFile '.lwr']] := ''
+
+			mouse_allSWCnum = 0
+			mouse_allSWDnum = 0
+			
+			foreach channel channelRange {
+				annotationSig = <>
+				read annotationSig AnnotPath+mouseFile+'.tannot'
+				annotRngs = [numdur2 [copy annotationSig] 1 swd]
+				allSWDnum += annotRngs.size
+				mouse_allSWDnum += annotRngs.size
+				
+				hphz = <;>
+				iread hphz hphzPath+mouseFile+'_'+RoSparamStr+'$channel'+'.hphz'
+				fundFreq = der([copy hphz[0;:]])*-1
+				delete hphz
+			
+				foreach SWD 0:annotRngs.size-1 {
+					swcCounts = [numdur2 [copy fundFreq[annotRngs[SWD][ranges]]] pi swc].size
+					allSWCnum += swcCounts
+					mouse_allSWCnum += swcCounts
+				}
+			}
+			updateStr = "$mouse_allSWCnum SWCs in $mouse_allSWDnum SWDs from $mouseFile"
+			echo $updateStr
+			addResult commonPath updateStr "$updateStrFname"
+		}
+		echo ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		addResult commonPath "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" "$updateStrFname"
+		updateStr = "TOTAL $allSWCnum SWCs in $allSWDnum SWDs from $commonFolder"
+		echo $updateStr
+		addResult commonPath updateStr "$updateStrFname"
+	}
+	
+	if (findSWCs==1) {
+	
+		SWC_EEGlist = {}
+		SWC_TrajectoryList = {}
+		SWC_PowerList = {}
+		SWC_IdentifierList = {}
+		
+		fNames = [file list lwrPath+"*.lwr"]
+		fNames = [listv sort fNames]
+
+		x_rng = (x-offset):(x+offset)
+		y_rng = (y-offset):(y+offset)
+		z_rng = (z-offset):(z+offset)
+		coord = {x_rng y_rng z_rng}
+		coordStr = "1:2 = "+"$x_rng[@<]"+":"+"$x_rng[@>]"+" degrees, 1:3 = "+"$y_rng[@<]"+":"+"$y_rng[@>]"+" degrees, 1:4 = "+"$z_rng[@<]"+":"+"$z_rng[@>]"+" degrees \r"+"coordinates $x x $y x $z"
+		
+		coordSWCnum = 0
+		channelSWCnum = Zero(6)
+		
+		
+		foreach session 0:fNames.size-1 {
+			mouseFile = fNames[session]
+			mouseFile[[str substr mouseFile '.lwr']] := ''
+			
+			mouse_channelSWCnum = Zero(6)
+			mouse_coordSWCnum = 0
+				
+			annotationSig = <>
+			read annotationSig AnnotPath+mouseFile+'.tannot'
+			annotRngs = [numdur2 [copy annotationSig] 1 swd]
+
+			# open EEG
+			rawEEG = <;>
+			iread rawEEG lwrPath+mouseFile+".lwr"
+
+			foreach channel channelRange {
+				# open all phase difference files
+				pd12 = <>
+				pd13 = <>
+				pd14 = <>
+				read pd12 psyncPath+mouseFile+'_'+'$RoSparamStr'+'$channel'+'.pd12'
+				read pd13 psyncPath+mouseFile+'_'+'$RoSparamStr'+'$channel'+'.pd13'
+				read pd14 psyncPath+mouseFile+'_'+'$RoSparamStr'+'$channel'+'.pd14'
+				
+				timepoints = find(annotationSig!=0 && (pd12>=coord[pd12_i][@<] && pd12<=coord[pd12_i][@>]) && (pd13>=coord[pd13_i][@<] && pd13<=coord[pd13_i][@>]) && (pd14>=coord[pd14_i][@<] && pd14<=coord[pd14_i][@>]))
+							
+				if (timepoints.size!=0) {
+					tps = timepoints.size
+					hphz = <;>
+					iread hphz hphzPath+mouseFile+'_'+RoSparamStr+'$channel'+'.hphz'
+					fundFreq = der([copy hphz[0;:]])*-1
+					delete hphz
+					
+					hamp = <;>
+					iread hamp hampPath+mouseFile+'_'+RoSparamStr+'$channel'+'.hamp'
+					
+					foreach SWD 0:annotRngs.size-1 {
+				
+						timepoints = find((pd12[annotRngs[SWD][ranges]]>=coord[pd12_i][@<] && pd12[annotRngs[SWD][ranges]]<=coord[pd12_i][@>]) && (pd13[annotRngs[SWD][ranges]]>=coord[pd13_i][@<] && pd13[annotRngs[SWD][ranges]]<=coord[pd13_i][@>]) && (pd14[annotRngs[SWD][ranges]]>=coord[pd14_i][@<] && pd14[annotRngs[SWD][ranges]]<=coord[pd14_i][@>]))
+
+						if (timepoints.size!=0) {
+							SWCs = [numdur2 [copy fundFreq[annotRngs[SWD][ranges]]] pi swc]
+							x0 = annotRngs[SWD][ranges][@<]
+							
+							foreach SWC 0:SWCs.size-1 {
+								timepoints = find((pd12[SWCs[SWC][ranges]+x0]>=coord[pd12_i][@<] && pd12[SWCs[SWC][ranges]+x0]<=coord[pd12_i][@>]) && (pd13[SWCs[SWC][ranges]+x0]>=coord[pd13_i][@<] && pd13[SWCs[SWC][ranges]+x0]<=coord[pd13_i][@>]) && (pd14[SWCs[SWC][ranges]+x0]>=coord[pd14_i][@<] && pd14[SWCs[SWC][ranges]+x0]<=coord[pd14_i][@>]))
+
+								if (timepoints.size!=0) {
+									coordSWCnum+=1
+									mouse_coordSWCnum+=1
+									channelSWCnum[channel]+=1
+									mouse_channelSWCnum[channel]+=1
+									
+									SWC_EEGlist+=rawEEG[channel;(SWCs[SWC][ranges]+x0)]
+
+									swcCoords = <pd12[SWCs[SWC][ranges]+x0];pd13[SWCs[SWC][ranges]+x0];pd14[SWCs[SWC][ranges]+x0]>
+									SWC_TrajectoryList+=swcCoords
+									
+									swcPower = hamp[0:3;SWCs[SWC][ranges]+x0]
+									totalPower = Zero(swcPower.ncol)
+									foreach i 0:4 {totalPower+=hamp[i;SWCs[SWC][ranges]+x0]}
+									
+									swcPowerPerc = Zero(4,swcPower.ncol+5)
+									# using 30% (0.3) of total power as reference for color coding because 100 (1.0) makes harmonic powers an indistinguishable blue
+									swcPowerPerc[:;@>] = ~<refPower,refPower*(3/4),refPower*(2/4),refPower*(1/4)>
+									foreach hz 0:3 {swcPowerPerc[hz;:@>-5] = swcPower[hz;:]/totalPower}
+									SWC_PowerList+=swcPowerPerc
+									
+									idList = {mouseFile channel SWD SWC SWCs.size timepoints.size SWCs[SWC].size SWCs[SWC][ranges][@<] SWCs[SWC][ranges][@>] x0}
+									SWC_IdentifierList+={idList}
+								}
+							}
+						}
+					}				
+				}
+			}
+			# to write SWC id information to .csv
+			updateStr = "mouse $mouseFile CHANNEL TOTALS - $mouse_channelSWCnum[0] $mouse_channelSWCnum[1] $mouse_channelSWCnum[2] $mouse_channelSWCnum[3] $mouse_channelSWCnum[4] $mouse_channelSWCnum[5] - $mouse_coordSWCnum SWCs"
+			addResult commonPath updateStr "$updateStrFname"
+			echo  $updateStr
+		}
+
+		echo ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+		addResult commonPath "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~" "$updateStrFname"
+
+		# updateStr = "offset $offset degrees around coordinates $x x $y x $z"
+		addResult commonPath coordStr "$updateStrFname"
+		echo $coordStr
+		
+		updateStr = "CHANNEL TOTALS - $channelSWCnum[0] $channelSWCnum[1] $channelSWCnum[2] $channelSWCnum[3] $channelSWCnum[4] $channelSWCnum[5]"
+		addResult commonPath updateStr "$updateStrFname"
+		echo $updateStr
+		
+		percentDist= (coordSWCnum/allSWCnum)*100
+		updateStr = "$coordSWCnum / $allSWCnum SWCs in pd distribution ($percentDist %)"
+		addResult commonPath updateStr "$updateStrFname"
+		echo $updateStr
+		
+		channelSWDnum = allSWDnum/6
+		updateStr = "$allSWCnum SWCs in $allSWDnum SWDs ($channelSWDnum by channel)from $commonFolder"
+		addResult commonPath updateStr "$updateStrFname"
+		echo $updateStr
+		
+		if (SWC_EEGlist.size!=0) {
+			swctl = [copy SWC_TrajectoryList]
+			if (displaySWCs==1) {
+				dispswc SWC_EEGlist swctl SWC_PowerList coord figureLimit windowLimit
+			}
+		} else {
+			echo NO SWCs
+			break
+		}
+		idStr = "$commonFolder"+"_"+"$offset"+"_"+"$x"+"_"+"$y"+"_"+"$z"
+		fullList = {SWC_EEGlist SWC_TrajectoryList SWC_PowerList SWC_IdentifierList channelSWCnum idStr}
+	}
+	
+	
+	if (SWCmetrics==1) {
+		SWCmetrics offset x y z fullList
+	} else {
+		return fullList		
+	}
+
+}

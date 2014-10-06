@@ -1,0 +1,266 @@
+# called by swcst2 to calculate SWC averages and displays SWC traces and their average 
+ 
+# Copyright (C) 2014 Christian Richard
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/gpl.html>. 
+
+# Author contact info:
+# lifepupil@gmail.com
+
+setproc SWCmetrics {{&num offset} {&num x} {&num y} {&num z} {&listv fullList}} {
+
+	specifiedFrequencyIndex = 0
+	freqIndex = 31
+	penVal = 2
+	pureWave = 0
+	pureSpikeP = 0
+		minFFpower = 0.2	
+	pureSpikeV = 0
+		minVoltage = -250
+	averageSWC = 1
+
+
+	# for SWC EEG overlap plot
+	SWC_EEGlist = fullList[0]
+	SWC_PowerList = fullList[2]
+	eegsSubList_1 = {}
+	eegsSubList_2 = {}
+
+	# FOR AVERAGE SWC
+	if (averageSWC==1) {
+		foreach swc 0:fullList[0].size-1 {
+			eegsSubList_1+=[copy fullList[0][swc]]
+			eegsSubList_1[@>].X = eegsSubList_1[@>].X/200
+			eegsSubList_2+=[copy fullList[0][swc]]
+			eegsSubList_2[@>].X = eegsSubList_2[@>].X/200
+		}
+	}	
+	
+	# FOR FILTERING PURE WAVE MORPHOLOGIES
+	if (pureWave==1) {
+		foreach swc 0:fullList[0].size-1 {
+			swcSize = fullList[0][swc].size-1
+			if (max(mean(SWC_PowerList[swc][0;0:swcSize]))>=minFFpower) {
+				eegsSubList_1+=[copy fullList[0][swc]]
+				eegsSubList_1[@>].X = eegsSubList_1[@>].X/200
+			} else {
+				eegsSubList_2+=[copy fullList[0][swc]]
+				eegsSubList_2[@>].X = eegsSubList_2[@>].X/200
+			}
+		}
+	}
+	
+	# FOR FILTERING PURE SPIKE MORPHOLOGIES USING SPECTRAL POWER
+	if (pureSpikeP==1) {
+		hxp = Zero(4)
+		foreach swc 0:fullList[0].size-1 {
+			swcSize = fullList[0][swc].size-1
+			foreach hx 0:3 {
+				hxp[hx] = mean(SWC_PowerList[swc][hx;0:swcSize])
+			}
+			if (max(hxp)==hxp[1] && hxp[0]>hxp[3] && hxp[2]>hxp[3] && sum(hxp)>0.5 && hxp[1]>minFFpower) {
+				eegsSubList_1+=[copy fullList[0][swc]]
+				eegsSubList_1[@>].X = eegsSubList_1[@>].X/200
+			} else {
+				eegsSubList_2+=[copy fullList[0][swc]]
+				eegsSubList_2[@>].X = eegsSubList_2[@>].X/200
+			}
+		}
+	}
+
+	# FOR FILTERING PURE SPIKE MORPHOLOGIES USING VOLTAGE
+	if (pureSpikeV==1) {
+		pl = {}
+		foreach swc 0:fullList[0].size-1 {
+			swcSize = fullList[0][swc].size-1
+			if (min(SWC_EEGlist[swc][0:swcSize])>=minVoltage) {
+				eegsSubList_1+=[copy fullList[0][swc]]
+				pl+=[copy fullList[2][swc]]
+				eegsSubList_1[@>].X = eegsSubList_1[@>].X/200
+			} else {
+				eegsSubList_2+=[copy fullList[0][swc]]
+				eegsSubList_2[@>].X = eegsSubList_2[@>].X/200
+			}
+		}
+	}
+		
+	# FOR CREATING SWC DURATION HISTOGRAMS
+	swc_durations = Zero(fullList[0].size)
+	swc_durations_1 = Zero(eegsSubList_1.size)
+	swc_durations_2 = Zero(eegsSubList_2.size)
+	
+	foreach i 0:fullList[0].size-1 {swc_durations[i] = fullList[0][i].size}
+	foreach i 0:eegsSubList_1.size-1 {swc_durations_1[i] = eegsSubList_1[i].size}
+	foreach i 0:eegsSubList_2.size-1 {swc_durations_2[i] = eegsSubList_2[i].size}
+		
+	minSD = min(swc_durations)
+	maxSD = max(swc_durations)
+	binsSD = Zero(3,maxSD+1)
+	
+	foreach dur minSD:maxSD {
+		freqCount = find(swc_durations==dur) ;; binsSD[0;dur] = freqCount.size
+		freqCount1 = find(swc_durations_1==dur) ;; binsSD[1;dur] = freqCount1.size
+		freqCount2 = find(swc_durations_2==dur) ;; binsSD[2;dur] = freqCount2.size
+	}
+	bsd = [copy binsSD[0;:]]
+	bsd1 = [copy binsSD[1;:]]
+	bsd2 = [copy binsSD[2;:]]
+	
+	max_bsd1 = max(bsd1)
+	max_bsd2 = max(bsd2)
+	
+	maxSWCduri = bsd.X[find(bsd==max(bsd))][0]
+	maxSWCduri1 = bsd1.X[find(bsd1==max_bsd1)][0]
+	maxSWCduri2 = bsd2.X[find(bsd2==max_bsd2)][0]
+	
+	maxSWC_Hz = 200/maxSWCduri
+	maxSWCdur = maxSWCduri/200
+	
+	minSDt = minSD/200
+	maxSDt = maxSD/200
+	minSD_Hz = 200/minSD
+	maxSD_Hz = 200/maxSD
+	percentSWCs_mostCommonHz = (max_bsd1/eegsSubList_1.size)*100
+	echo min= $minSD ($minSDt ms, $minSD_Hz Hz) 
+	echo max= $maxSD ($maxSDt ms, $maxSD_Hz Hz)
+	# echo maxSWCduri1= $maxSWCduri1 maxSWCduri2= $maxSWCduri2
+	# echo total SWCs= $eegsSubList_1.size + $eegsSubList_2.size
+	echo $max_bsd1 SWCs of $eegsSubList_1.size total SWCs ($percentSWCs_mostCommonHz %)
+	echo at most common duration $maxSWCdur ms ($maxSWCduri sampling_index -- $maxSWC_Hz Hz)
+
+	# to make publishable figures
+	if (specifiedFrequencyIndex==1) {msdi = freqIndex} else {msdi = maxSWCduri}
+	SWC_at_index = bsd[msdi]
+	SWC1_at_index = bsd1[msdi]
+	totalSWCs = sum(bsd)
+
+	# bsd.X = bsd.X/200
+	# bsd1.X = bsd1.X/200
+	
+	# echo $binsSD.ncol
+	Hz = 200/(I(binsSD.ncol)+1)
+	Hz = <0,Hz[:@>-1]>
+	bsd2.X = Hz
+	
+	si = 16
+	ei = 44
+	
+	# bsd1/=max_bsd1
+	# bsd2/=max_bsd2
+	
+	# bsd = bsd[si:ei]
+	# bsd1 = bsd1[si:ei]
+	bsd2 = bsd2[si:ei]
+	
+	# bsd.x0 = si
+	# bsd1.x0 = si
+	bsd2.x0 = si
+	
+	if (averageSWC==1) {
+		eegsSubList_1 = {}
+		foreach swc 0:fullList[0].size-1 {
+			if (fullList[0][swc].size==msdi) {
+				eegsSubList_1+=[copy fullList[0][swc]]
+			}
+		}
+		
+		avgSWCimg = Zero(eegsSubList_1.size,msdi)
+		foreach swc 0:eegsSubList_1.size-1 {
+			avgSWCimg[swc;:] = eegsSubList_1[swc]
+		}
+		
+		avgSWC = Zero(msdi)
+		foreach t 0:msdi-1 {
+			avgSWC[t] = mean(avgSWCimg[:;t])
+		}
+		avgSWC.X = avgSWC.X/200
+		eegsSubList_1 = {}
+		eegsSubList_1+=avgSWC
+		penVal = 5
+	}
+	
+	# GENERATE FIGURES
+	disp SDHfrequencies bsd2
+	
+	if ([msge SWCs exist]) {msge SWCs delete}
+	SWCtitle = "off_"+"$offset"+"_x_"+"$x"+"_y_"+"$y"+"_z_"+"$z"+"_at_"+"$msdi"+"_SWC1_"+"$SWC1_at_index"+"_of_"+"$totalSWCs"
+	window new 'SWCs' -pos 50 0 -size 550 800
+	msge SWCs add 'dataDisplay' FramedView -pos 20 0 -size 500 800 -title "$SWCtitle" -axisFont 'Arial-16' -clip 'no'
+	swcCounter = 0
+	foreach swc 0:eegsSubList_2.size-1 {
+		if (eegsSubList_2[swc].size==msdi && max(eegsSubList_2[swc])<2000 && min(eegsSubList_2[swc])>-2000) {
+		# if (eegsSubList_2[swc].size==msdi) {
+			swcCounter+=1
+			
+			# N.B. - change last two values in -bound field to adjust the range of voltage values displayed
+			# setg SWCs.dataDisplay -graph+ eegsSubList_2[swc] -bound '*' '*' -2000 2000
+			setg SWCs.dataDisplay -graph+ eegsSubList_2[swc]
+			setg SWCs.dataDisplay.view.$swcCounter -fg 'black' -pen 1 
+		}
+	}
+	echo swcCounter $swcCounter
+	foreach swc 0:eegsSubList_1.size-1 {
+		if (eegsSubList_1[swc].size==msdi) {
+			swcCounter+=1
+			setg SWCs.dataDisplay -graph+ eegsSubList_1[swc]
+			setg SWCs.dataDisplay.view.$swcCounter -fg 'red' -pen $penVal 
+		}
+	}
+	# N.B. - last number in -margin field increases the space beneath the x-axis labels to prevent that annoying text truncation problem
+	setg SWCs.dataDisplay -margin 60 20 25 70
+	msge SWCs show
+
+	if (![var exist channelSWCnum]) {channelSWCnum = fullList[4]}
+	channelVals = "$channelSWCnum[0]"+"_"+"$channelSWCnum[1]"+"_"+"$channelSWCnum[2]"+"_"+"$channelSWCnum[3]"+"_"+"$channelSWCnum[4]"+"_"+"$channelSWCnum[5]"
+	channelSWCnum = <0,channelSWCnum,0>
+	disp CHANNEL_COUNTS channelSWCnum -title "$channelVals" -..* -curve '|'
+	# disp SDHindices bsd
+	# disp SDHdurations bsd1
+	
+	
+	if (fullList.size>7) {fullList = fullList[:5]}
+	fullList+={binsSD[0;:]}
+	fullList+={eegsSubList_1}
+	fullList+={eegsSubList_2}
+	# fullList+={pl}
+	# fh+={fl[5] fl[6]} ;; source swcst2 ;; fl = [
+	return fullList
+}
+
+
+
+# ~~~~~~~~~~~~~~~~~~ STARTING CODE TO INVESTIGATE HOW HARMONIC POWER CAN BE USED TO DISCRIMINATE SWC SUBTYPES
+# foreach swc 0:fl[0].size-1 {
+	# swcSize = fl[0][swc].size
+	# hxp = Zero(4)
+	# foreach hx 0:3 {hxp[hx] = mean(fl[2][swc][hx;0:swcSize)}
+	# pr[swc] = mean(fl[2][swc][0;0:fl[0][swc].size])/sum(fl[2][swc][1:3;0:fl[0][swc].size])}
+
+	# foreach i 0:pl.size-1 {sz = fl[6][i].size-1 ;; foreach j 0:3 {hx[j;0]=mean(pl[i][j;0:sz])} ;; plm+=[copy hx]}
+	# i+=1 ;; disp TTT {fl[6][i] pl[i] plm[i]} -s 'none'
+	
+# ~~~~~~~~~~~~~~ OTHER CODE FOR INVESTIGATION OF...
+#	d12 = Zero(SWC_TrajectoryList[0].ncol)
+#	foreach c 0:SWC_TrajectoryList[0].ncol-1 {d12[c] = [trajVel ~<SWC_TrajectoryList[0][:;c]> ~<SWC_TrajectoryList[1][:;c]>]}
+
+#	d13 = Zero(SWC_TrajectoryList[0].ncol)
+#	foreach c 0:SWC_TrajectoryList[0].ncol-1 {d13[c] = [trajVel ~<SWC_TrajectoryList[0][:;c]> ~<SWC_TrajectoryList[2][:;c]>]}
+
+#	d23 = Zero(SWC_TrajectoryList[0].ncol)
+#	foreach c 0:SWC_TrajectoryList[0].ncol-1 {d23[c] = [trajVel ~<SWC_TrajectoryList[1][:;c]> ~<SWC_TrajectoryList[2][:;c]>]}	
+	
+#	disp SWCRESULTS {SWC_EEGlist[0] SWC_EEGlist[1] SWC_EEGlist[2]} {SWC_TrajectoryList[0] SWC_TrajectoryList[1] SWC_TrajectoryList[2]} {d12 d13 d23}
+	
+#	upper360 = One(SWC_TrajectoryList[0].ncol)*360
+#	disp SWCRESULTS2 SWC_EEGlist[0] SWC_EEGlist[1] SWC_EEGlist[2] {{SWC_TrajectoryList[0][0;:] SWC_TrajectoryList[0][1;:] SWC_TrajectoryList[0][2;:] upper360}} {{SWC_TrajectoryList[1][0;:] SWC_TrajectoryList[1][1;:] SWC_TrajectoryList[1][2;:] upper360}} {{SWC_TrajectoryList[2][0;:] SWC_TrajectoryList[2][1;:] SWC_TrajectoryList[2][2;:] upper360}} -..4 -fg 'red' -..5 -fg 'blue' -..6 -fg 'green' -..8 -fg 'red' -..9 -fg 'blue' -..10 -fg 'green' -..12 -fg 'red' -..13 -fg 'blue' -..14 -fg 'green'
